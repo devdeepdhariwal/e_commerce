@@ -1,6 +1,7 @@
 import prisma from "../config/db.js";
 import { hashpassword } from "../utils/hash.js";
 import { comparehash } from "../utils/hash.js";
+import AppError from "../utils/AppError.js";
 
 export const registeruser = async ({name, email, password}) =>{
  const normalisedemail = email.trim().toLowerCase();
@@ -9,9 +10,9 @@ export const registeruser = async ({name, email, password}) =>{
  });
 
  if(existinguser){
-    throw new Error("User Already Exists");
+    throw new AppError("User Already Exists",409);
  }
- 
+
  const hashedpassword = await hashpassword(password);
  const user = await prisma.user.create({
     data :{
@@ -35,18 +36,53 @@ export const loginUser = async({email,password}) => {
    });
 
    if(!user){
-    return res.status(400).json({
-        message : "User Not Exits Please Register First",
-    });
+    throw new AppError ("Invalid Credentials",401);
    }
 
-  const ismatch = comparehash(password,user.password);
+  const ismatch = await comparehash(password,user.password);
   if(!ismatch){
-    return res.status(400).json({
-        message : "Invalid Password",
-    });
-
-
+    throw new AppError("Invalid Credentials",401);
   }
   return user;
 };
+
+export async function saveRefreshToken (userId,hash){
+  await prisma.token.create({
+   data : {
+      userId : userId,
+      tokenHash : hash,
+      expiresAt : new Date(Date.now()+7*24*60*60*1000)
+   }
+  })
+}
+
+export async function getRefreshToken(tokenhash){
+   const token = await prisma.token.findUnique({
+      where : {tokenHash : tokenhash}
+   })
+   return token;
+}
+
+export async function deleteRefreshToken(tokenhash){
+   await prisma.token.delete({
+      where : {tokenHash : tokenhash}
+   })
+}
+
+export async function getUserById(userId){
+   const user = await prisma.user.findUnique({
+      where : {id : userId},
+      select : {
+         id : true,
+         name : true,
+         email : true,
+         createdAt : true,
+      }
+   })
+
+   if(!user){
+      throw new AppError("User not found",404);
+   }
+
+   return user
+}

@@ -11,10 +11,23 @@ datasource db {
   provider = "postgresql"
 }
 
-model user{
+model User{
   id        String @id @default(uuid())
   name      String
   email     String @unique
   password  String
   createdAt DateTime @default(now())
+  tokens    Token[]
 }
+
+model Token{
+  id       Int @id @default(autoincrement())
+  userId    String
+  tokenHash String @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user  User@relation(fields : [userId], references :[id])
+  @@index([userId])
+}
+
