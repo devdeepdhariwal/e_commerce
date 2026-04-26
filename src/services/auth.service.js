@@ -43,7 +43,8 @@ export const loginUser = async({email,password}) => {
   if(!ismatch){
     throw new AppError("Invalid Credentials",401);
   }
-  return user;
+  const { password: _, ...safeUser } = user;
+  return safeUser;
 };
 
 export async function saveRefreshToken (userId,hash){
@@ -77,6 +78,7 @@ export async function getUserById(userId){
          name : true,
          email : true,
          createdAt : true,
+         role : true,
       }
    })
 

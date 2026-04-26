@@ -8,4 +8,4 @@ router.post("/register",register);
 router.post("/login",login);
 router.post("/refresh-token",refreshToken);
 router.get("/me",authMiddleware,getMe);
-export default router;
+export default router; 
