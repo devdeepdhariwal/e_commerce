@@ -2,7 +2,7 @@
 
 > A production-grade RESTful E-Commerce Backend demonstrating professional backend engineering with dual-database architecture, secure JWT authentication, and MongoDB Atlas Search.
 
-![Tests](https://github.com/devdeepdhariwal/e_commerce_industry/actions/workflows/test.yml/badge.svg)
+![Tests](https://github.com/devdeepdhariwal/e_commerce/actions/workflows/test.yml/badge.svg)
 ![Status](https://img.shields.io/badge/Status-In%20Development-yellow)
 ![Node.js](https://img.shields.io/badge/Node.js-ES%20Modules-339933?logo=node.js)
 ![Express](https://img.shields.io/badge/Express-v5-000000?logo=express)
