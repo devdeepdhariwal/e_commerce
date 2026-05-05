@@ -2,36 +2,36 @@ import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import {
-  registeruser,
+  registerUser,
   loginUser,
   getRefreshToken,
   saveRefreshToken,
   deleteRefreshToken,
   getUserById,
+  logoutUser,
 } from "../services/auth.service.js";
 import AppError from "../utils/AppError.js";
+
+
 
 export const register = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
-      return res.status(400).json({
-        message: "All fields are required",
-      });
+      throw new AppError("All fields are required", 400); 
     }
 
-    const passwordRegex =
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/;
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/;
 
     if (!passwordRegex.test(password)) {
-      return res.status(400).json({
-        message:
-          "Password must be at least 8 characters, include uppercase, lowercase, number, and special character",
-      });
+      throw new AppError(                               
+        "Password must be at least 8 characters, include uppercase, lowercase, number, and special character",
+        400
+      );
     }
 
-    const user = await registeruser({ name, email, password });
+    const user = await registerUser({ name, email, password });
 
     return res.status(201).json({
       message: "User registered successfully",
@@ -46,14 +46,13 @@ export const register = async (req, res, next) => {
   }
 };
 
+
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({
-        message: "All fields are required",
-      });
+      throw new AppError("All fields are required", 400); 
     }
 
     const user = await loginUser({ email, password });
@@ -78,39 +77,62 @@ export const login = async (req, res, next) => {
   }
 };
 
+
+export const logout = async (req, res, next) => {
+  try {
+    const accessToken = req.headers.authorization?.split(" ")[1];
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!accessToken || !refreshToken) {
+      throw new AppError("Tokens required", 400); 
+    }
+
+    await logoutUser(accessToken, refreshToken);
+    res.clearCookie("refreshToken",{
+      httpOnly : true,
+      secure : process.env.NODE_ENV === "production",
+      sameSite : "strict"
+    })
+
+    return res.status(200).json({
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
 export const refreshToken = async (req, res, next) => {
   try {
     const rawToken = req.cookies.refreshToken;
 
     if (!rawToken) {
-      return next(new AppError("Refresh token missing", 401));
+      throw new AppError("Refresh token missing", 401); 
     }
 
     try {
       jwt.verify(rawToken, process.env.REFRESH_TOKEN_SECRET);
     } catch {
-      return next(new AppError("Invalid or expired refresh token", 401));
+      throw new AppError("Invalid or expired refresh token", 401); 
     }
 
     const hash = crypto.createHash("sha256").update(rawToken).digest("hex");
     const record = await getRefreshToken(hash);
 
     if (!record) {
-      return next(new AppError("Invalid refresh token", 401));
+      throw new AppError("Invalid refresh token", 401); 
     }
 
     if (record.expiresAt < new Date()) {
       await deleteRefreshToken(hash);
-      return next(new AppError("Session expired", 401));
+      throw new AppError("Session expired", 401);      
     }
 
     await deleteRefreshToken(hash);
 
     const newRefreshToken = generateRefreshToken(record.userId);
-    const newHash = crypto
-      .createHash("sha256")
-      .update(newRefreshToken)
-      .digest("hex");
+    const newHash = crypto.createHash("sha256").update(newRefreshToken).digest("hex");
     await saveRefreshToken(record.userId, newHash);
 
     const dbUser = await getUserById(record.userId);
@@ -127,9 +149,10 @@ export const refreshToken = async (req, res, next) => {
       accessToken: newAccessToken,
     });
   } catch (error) {
-    next(error);
+    next(error); 
   }
 };
+
 
 export async function getMe(req, res, next) {
   try {
@@ -140,6 +163,6 @@ export async function getMe(req, res, next) {
       user,
     });
   } catch (error) {
-    next(error);
+    next(error); 
   }
 }

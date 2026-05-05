@@ -1,40 +1,35 @@
 import jwt from "jsonwebtoken";
+import redis from "../config/redis.js";
+import AppError from "../utils/AppError.js";
 
-const authMiddleware = (req, res, next) => {
-
-  // STEP 1 — Extract token
+const authMiddleware = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({
-      success: false,
-      message: "Unauthorized: No token provided"
-    });
+    return next(new AppError("Unauthorized: No token provided", 401));
   }
 
-  const token = authHeader.split(" ")[1]; // "Bearer token" → ["Bearer", "token"]
+  const token = authHeader.split(" ")[1];
 
-  // STEP 2 — Verify token
   try {
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
-    req.user = decoded; // attach user info to request
+    const isBlacklisted = await redis.get("blacklist:" + token);
+    if (isBlacklisted) {
+      throw new AppError("Token has been invalidated", 401);
+    }
 
+    req.user = decoded;
     next();
 
   } catch (error) {
-
     if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        success: false,
-        message: "Token expired"
-      });
+      return next(new AppError("Token expired", 401));
     }
-
-    return res.status(401).json({
-      success: false,
-      message: "Invalid token"
-    });
+    if (error.name === "JsonWebTokenError") {
+      return next(new AppError("Invalid token", 401));
+    }
+    next(error);
   }
 };
 
