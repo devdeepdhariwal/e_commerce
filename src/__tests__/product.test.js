@@ -3,6 +3,7 @@ import request from "supertest";
 import app from "../app.js";
 import prisma from "../config/db.js";
 import product from "../models/product.model.js";
+import category from "../models/category.model.js";
 
 // ─── Test Data ───────────────────────────────────────────
 
@@ -18,23 +19,33 @@ const REGULAR_USER = {
   password: "Regular@1234",
 };
 
-const TEST_PRODUCT = {
+let TEST_PRODUCT = {
   name: `Test Product ${Date.now()}`,
   description: "A test product for integration tests",
-  category: "T-Shirts",
   price: 999,
   images: ["https://picsum.photos/400/400"],
-  variants: [{ size: "M", color: "Black", stock: 50 }],
+  attributes: [{ key: "size", value: "M" }, { key: "color", value: "Black" }],
 };
 
 let adminToken;
 let regularToken;
 let createdProductId;
 let createdProductSlug;
+let testCategoryId;
+let testCategorySlug;
 
 // ─── Setup: Register users, promote one to ADMIN ────────
 
 beforeAll(async () => {
+  // Create test category
+  const testCategory = await category.create({
+    name: "T-Shirts",
+    slug: "t-shirts-" + Date.now(),
+  });
+  testCategoryId = testCategory._id;
+  testCategorySlug = testCategory.slug;
+  TEST_PRODUCT.categoryId = testCategoryId;
+
   // Register admin user
   await request(app).post("/auth/register").send(ADMIN_USER);
 
@@ -62,9 +73,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   try {
-    // Delete test product from MongoDB
+    // Delete test product and category from MongoDB
     if (createdProductId) {
       await product.findByIdAndDelete(createdProductId);
+    }
+    if (testCategoryId) {
+      await category.findByIdAndDelete(testCategoryId);
     }
 
     // Delete test users from PostgreSQL (cascade deletes tokens)
@@ -159,12 +173,12 @@ describe("GET /products/", () => {
   });
 
   it("should filter by category", async () => {
-    const res = await request(app).get("/products/?category=T-Shirts");
+    const res = await request(app).get(`/products/?category=${testCategorySlug}`);
 
     expect(res.status).toBe(200);
     if (res.body.data.length > 0) {
       res.body.data.forEach((p) => {
-        expect(p.category).toBe("T-Shirts");
+        expect(p.categoryId).toBe(testCategoryId.toString());
       });
     }
   });
