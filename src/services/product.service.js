@@ -1,4 +1,4 @@
-
+import Category from "../models/category.model.js";
 import product from "../models/product.model.js";
 import AppError from "../utils/AppError.js";
 
@@ -17,15 +17,25 @@ export const createProduct = async(productData) =>{
     if(findSlug){
         throw new AppError("Slug Already Exists",409)
     }
+    
+    const category = await Category.findById(productData.categoryId)
+    if(!category){
+      throw new AppError("Category not found", 404)
+    }
+    if(!category.isActive){
+      throw new AppError("Category is inactive", 400)
+    }
     const createdProduct = await product.create({
         name : productData.name,
         slug : slug,
         description : productData.description,
         price : productData.price,
-        category : productData.category,
+        categoryId : productData.categoryId,
         images : productData.images,
-        variants : productData.variants,
-        createdBy : productData.createdBy
+        attributes : productData.attributes,
+        createdBy : productData.createdBy,
+        categoryPath : category.path,
+        isActive : productData.isActive
     })
 
     return createdProduct;
@@ -78,15 +88,14 @@ export const getProducts = async (filters, options) => {
   const { page, limit } = options;
 
   const skip = (page - 1) * limit;
+  let findCategory;
 
-  // --- Build compound query clauses ---
   const mustClauses = [];
   const shouldClauses = [];
   const filterClauses = [];
 
-  // Fuzzy text search on product name (tolerates 1 typo)
   if (name) {
-    shouldClauses.push({
+    mustClauses.push({
       text: {
         query: name,
         path: "name",
@@ -95,16 +104,21 @@ export const getProducts = async (filters, options) => {
     });
   }
 
-  // Exact match on category (filter = no scoring impact)
   if (category) {
+    findCategory = await Category.findOne({ slug: category });
+
+    if (!findCategory) {
+      return { products: [], totalCount: 0 };
+    }
+
     filterClauses.push({
-      text: { query: category, path: "category" },
+      equals: {
+        path: "categoryPath",
+        value: findCategory._id,
+      },
     });
   }
 
-  // Price range filter
-  // Spread pattern used to safely handle partial ranges (only min, only max, or both)
-  // Avoids passing NaN when one side is undefined
   if (minPrice || maxPrice) {
     filterClauses.push({
       range: {
@@ -115,12 +129,10 @@ export const getProducts = async (filters, options) => {
     });
   }
 
-  // Always filter to only active products
   mustClauses.push({
     equals: { path: "isActive", value: true },
   });
 
-  // --- Aggregation pipeline ---
   const pipeline = [
     {
       $search: {
@@ -138,9 +150,8 @@ export const getProducts = async (filters, options) => {
 
   const products = await product.aggregate(pipeline);
 
-  // When name search is active, we must count via the same Atlas Search pipeline
-  // because countDocuments can't replicate fuzzy text matching
   let totalCount;
+
   if (name) {
     const countPipeline = [
       {
@@ -155,13 +166,16 @@ export const getProducts = async (filters, options) => {
       },
       { $count: "total" },
     ];
+
     const countResult = await product.aggregate(countPipeline);
     totalCount = countResult.length > 0 ? countResult[0].total : 0;
   } else {
     const query = { isActive: true };
-    if (category) query.category = category;
+
+    if (findCategory) query.categoryPath = findCategory._id;
     if (minPrice) query.price = { ...query.price, $gte: Number(minPrice) };
     if (maxPrice) query.price = { ...query.price, $lte: Number(maxPrice) };
+
     totalCount = await product.countDocuments(query);
   }
 
@@ -185,12 +199,26 @@ if(updatedData.name){
    }
     updatedData.slug = newSlug
 }
-  
+let category;
+
+if(updatedData.categoryId){
+  category = await Category.findById(updatedData.categoryId)
+  if(!category){
+    throw new AppError("Category not Found",404)
+  }
+  if(!category.isActive){
+    throw new AppError("Category is inActive",400)
+  }
+  updatedData.categoryPath = category.path;
+}
+
 
    const updatedProduct = await product.findByIdAndUpdate(
     id,
     updatedData,
-    {new : true}
+    {new : true,
+     runValidators : true
+    }
    )
    if(!updatedProduct){
     throw new AppError("Product not found", 404)

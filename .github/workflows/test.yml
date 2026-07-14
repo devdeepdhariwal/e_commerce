@@ -30,8 +30,7 @@ jobs:
       ACCESS_TOKEN_SECRET: test-access-secret-key-for-ci
       REFRESH_TOKEN_SECRET: test-refresh-secret-key-for-ci
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
-      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      REDIS_URL: ${{ secrets.REDIS_URL }}
       NODE_ENV: development
 
     steps:
@@ -40,7 +39,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: "npm"
 
       - name: Install dependencies

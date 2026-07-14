@@ -98,7 +98,7 @@ export const logoutUser = async (accessToken, refreshToken) => {
    const now = Math.floor(Date.now() / 1000)
    const ttl = decoded.exp - now
    if (ttl > 0) {
-      await redis.set("blacklist:" + accessToken, 1, { ex: ttl })
+      await redis.set("blacklist:" + accessToken, 1, "EX", ttl);
    }
    const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
    await prisma.token.delete({

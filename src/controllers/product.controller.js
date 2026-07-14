@@ -4,20 +4,21 @@ import AppError from "../utils/AppError.js";
 
 export const createProduct = async (req, res, next) => {
   try {
-    const { name, description, category, price, images, variants, isActive } =
+    const { name, description, categoryId, price, images, attributes, isActive } =
       req.body;
     const createdBy = req.user.userId;
-    if (!name || !description || !category || !price || !images || !variants) {
+    if (!name || !description || !categoryId || !price || !images || !attributes) {
       throw new AppError("All Fields are Necessary",400)
     }
     const product = await productService.createProduct({
       name,
       description,
-      category,
+      categoryId,
       price,
       images,
-      variants,
+      attributes,
       createdBy,
+      isActive
     });
 
     return res.status(201).json({
@@ -103,14 +104,14 @@ export const updateProduct = async(req,res,next) =>{
       name,
       description,
       price,
-      category,
+      categoryId,
       images,
-      variants, 
+      attributes, 
       isActive,
     } = req.body;
 
     const updatedData = Object.fromEntries(
-      Object.entries({ name, description, price, category, images, variants, isActive })
+      Object.entries({ name, description, price, categoryId, images, attributes, isActive })
         .filter(([_, v]) => v !== undefined)
     );
   const product = await productService.updateProduct(id,updatedData)
