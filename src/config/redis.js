@@ -1,4 +1,4 @@
-// Pseudocode:
+
 import Redis from "ioredis"
 if(!process.env.REDIS_URL){
     throw new Error("Redis_url is not defined")

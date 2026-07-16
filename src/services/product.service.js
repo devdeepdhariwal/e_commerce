@@ -29,10 +29,9 @@ export const createProduct = async(productData) =>{
         name : productData.name,
         slug : slug,
         description : productData.description,
-        price : productData.price,
         categoryId : productData.categoryId,
         images : productData.images,
-        attributes : productData.attributes,
+        variants : productData.variants,
         createdBy : productData.createdBy,
         categoryPath : category.path,
         isActive : productData.isActive
@@ -62,11 +61,11 @@ export const createProduct = async(productData) =>{
 //   }
 
 //   if (minPrice) {
-//     query.price = { ...query.price, $gte: Number(minPrice) };
+//     query["variants.price"] = { ...query["variants.price"], $gte: Number(minPrice) };
 //   }
 
 //   if (maxPrice) {
-//     query.price = { ...query.price, $lte: Number(maxPrice) };
+//     query["variants.price"] = { ...query["variants.price"], $lte: Number(maxPrice) };
 //   }
 
 //   const skip = (page - 1) * limit;
@@ -122,7 +121,7 @@ export const getProducts = async (filters, options) => {
   if (minPrice || maxPrice) {
     filterClauses.push({
       range: {
-        path: "price",
+        path: "variants.price",
         ...(minPrice && { gte: Number(minPrice) }),
         ...(maxPrice && { lte: Number(maxPrice) }),
       },
@@ -173,8 +172,8 @@ export const getProducts = async (filters, options) => {
     const query = { isActive: true };
 
     if (findCategory) query.categoryPath = findCategory._id;
-    if (minPrice) query.price = { ...query.price, $gte: Number(minPrice) };
-    if (maxPrice) query.price = { ...query.price, $lte: Number(maxPrice) };
+    if (minPrice) query["variants.price"] = { ...query["variants.price"], $gte: Number(minPrice) };
+    if (maxPrice) query["variants.price"] = { ...query["variants.price"], $lte: Number(maxPrice) };
 
     totalCount = await product.countDocuments(query);
   }

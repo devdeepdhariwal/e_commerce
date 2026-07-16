@@ -22,9 +22,27 @@ const REGULAR_USER = {
 let TEST_PRODUCT = {
   name: `Test Product ${Date.now()}`,
   description: "A test product for integration tests",
-  price: 999,
   images: ["https://picsum.photos/400/400"],
-  attributes: [{ key: "size", value: "M" }, { key: "color", value: "Black" }],
+  variants: [
+    {
+      attributes: { Color: "Black", Size: "S" },
+      price: 499,
+      stock: 12,
+      sku: "TP-BLK-S",
+    },
+    {
+      attributes: { Color: "Black", Size: "M" },
+      price: 499,
+      stock: 5,
+      sku: "TP-BLK-M",
+    },
+    {
+      attributes: { Color: "White", Size: "M" },
+      price: 599,
+      stock: 20,
+      sku: "TP-WHT-M",
+    },
+  ],
 };
 
 let adminToken;
@@ -98,7 +116,7 @@ afterAll(async () => {
 // ─── CREATE PRODUCT ──────────────────────────────────────
 
 describe("POST /products/", () => {
-  it("should create a product as ADMIN", async () => {
+  it("should create a product with variants as ADMIN", async () => {
     const res = await request(app)
       .post("/products/")
       .set("Authorization", `Bearer ${adminToken}`)
@@ -109,7 +127,11 @@ describe("POST /products/", () => {
     expect(res.body.product).toHaveProperty("_id");
     expect(res.body.product.name).toBe(TEST_PRODUCT.name);
     expect(res.body.product).toHaveProperty("slug");
-    expect(res.body.product.price).toBe(TEST_PRODUCT.price);
+    expect(res.body.product.variants).toHaveLength(3);
+    expect(res.body.product.variants[0]).toHaveProperty("price");
+    expect(res.body.product.variants[0]).toHaveProperty("stock");
+    expect(res.body.product.variants[0]).toHaveProperty("sku");
+    expect(res.body.product.variants[0]).toHaveProperty("attributes");
 
     createdProductId = res.body.product._id;
     createdProductSlug = res.body.product.slug;
@@ -135,6 +157,19 @@ describe("POST /products/", () => {
       .post("/products/")
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ name: "Incomplete Product" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("should reject product with empty variants array", async () => {
+    const res = await request(app)
+      .post("/products/")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        ...TEST_PRODUCT,
+        name: `Empty Variants ${Date.now()}`,
+        variants: [],
+      });
 
     expect(res.status).toBe(400);
   });
@@ -184,13 +219,16 @@ describe("GET /products/", () => {
   });
 
   it("should filter by price range", async () => {
-    const res = await request(app).get("/products/?minPrice=500&maxPrice=2000");
+    const res = await request(app).get("/products/?minPrice=100&maxPrice=2000");
 
     expect(res.status).toBe(200);
     if (res.body.data.length > 0) {
       res.body.data.forEach((p) => {
-        expect(p.price).toBeGreaterThanOrEqual(500);
-        expect(p.price).toBeLessThanOrEqual(2000);
+        // At least one variant should have price in range
+        const hasMatchingVariant = p.variants.some(
+          (v) => v.price >= 100 && v.price <= 2000
+        );
+        expect(hasMatchingVariant).toBe(true);
       });
     }
   });
@@ -207,13 +245,14 @@ describe("GET /products/", () => {
 // ─── GET PRODUCT BY SLUG ────────────────────────────────
 
 describe("GET /products/:slug", () => {
-  it("should return product by slug", async () => {
+  it("should return product by slug with variants", async () => {
     const res = await request(app).get(`/products/${createdProductSlug}`);
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.product.slug).toBe(createdProductSlug);
     expect(res.body.product.name).toBe(TEST_PRODUCT.name);
+    expect(res.body.product.variants).toHaveLength(3);
   });
 
   it("should return 404 for non-existent slug", async () => {
@@ -226,15 +265,25 @@ describe("GET /products/:slug", () => {
 // ─── UPDATE PRODUCT ─────────────────────────────────────
 
 describe("PUT /products/:id", () => {
-  it("should update product as ADMIN", async () => {
+  it("should update product variants as ADMIN", async () => {
+    const updatedVariants = [
+      {
+        attributes: { Color: "Red", Size: "L" },
+        price: 1299,
+        stock: 8,
+        sku: "TP-RED-L",
+      },
+    ];
+
     const res = await request(app)
       .put(`/products/${createdProductId}`)
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ price: 1299 });
+      .send({ variants: updatedVariants });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.product.price).toBe(1299);
+    expect(res.body.product.variants).toHaveLength(1);
+    expect(res.body.product.variants[0].price).toBe(1299);
     // Name should remain unchanged (partial update)
     expect(res.body.product.name).toBe(TEST_PRODUCT.name);
   });
@@ -243,7 +292,7 @@ describe("PUT /products/:id", () => {
     const res = await request(app)
       .put(`/products/${createdProductId}`)
       .set("Authorization", `Bearer ${regularToken}`)
-      .send({ price: 1 });
+      .send({ variants: [{ attributes: { Color: "Blue" }, price: 1, stock: 1, sku: "X" }] });
 
     expect(res.status).toBe(403);
   });
@@ -251,7 +300,7 @@ describe("PUT /products/:id", () => {
   it("should reject update without auth", async () => {
     const res = await request(app)
       .put(`/products/${createdProductId}`)
-      .send({ price: 1 });
+      .send({ variants: [{ attributes: { Color: "Blue" }, price: 1, stock: 1, sku: "X" }] });
 
     expect(res.status).toBe(401);
   });
@@ -260,7 +309,7 @@ describe("PUT /products/:id", () => {
     const res = await request(app)
       .put("/products/000000000000000000000000")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ price: 100 });
+      .send({ variants: [{ attributes: { Color: "Blue" }, price: 100, stock: 5, sku: "XX" }] });
 
     expect(res.status).toBe(404);
   });

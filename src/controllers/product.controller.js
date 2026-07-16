@@ -4,19 +4,21 @@ import AppError from "../utils/AppError.js";
 
 export const createProduct = async (req, res, next) => {
   try {
-    const { name, description, categoryId, price, images, attributes, isActive } =
+    const { name, description, categoryId, variants, images, isActive } =
       req.body;
     const createdBy = req.user.userId;
-    if (!name || !description || !categoryId || !price || !images || !attributes) {
+    if (!name || !description || !categoryId || !variants || !images) {
       throw new AppError("All Fields are Necessary",400)
+    }
+    if (!Array.isArray(variants) || variants.length === 0) {
+      throw new AppError("At least one variant is required",400)
     }
     const product = await productService.createProduct({
       name,
       description,
       categoryId,
-      price,
+      variants,
       images,
-      attributes,
       createdBy,
       isActive
     });
@@ -103,15 +105,14 @@ export const updateProduct = async(req,res,next) =>{
     const {
       name,
       description,
-      price,
       categoryId,
+      variants,
       images,
-      attributes, 
       isActive,
     } = req.body;
 
     const updatedData = Object.fromEntries(
-      Object.entries({ name, description, price, categoryId, images, attributes, isActive })
+      Object.entries({ name, description, categoryId, variants, images, isActive })
         .filter(([_, v]) => v !== undefined)
     );
   const product = await productService.updateProduct(id,updatedData)
