@@ -25,19 +25,28 @@ let TEST_PRODUCT = {
   images: ["https://picsum.photos/400/400"],
   variants: [
     {
-      attributes: { Color: "Black", Size: "S" },
+      attributes: [
+        { name: "Color", value: "Black" },
+        { name: "Size", value: "S" },
+      ],
       price: 499,
       stock: 12,
       sku: "TP-BLK-S",
     },
     {
-      attributes: { Color: "Black", Size: "M" },
+      attributes: [
+        { name: "Color", value: "Black" },
+        { name: "Size", value: "M" },
+      ],
       price: 499,
       stock: 5,
       sku: "TP-BLK-M",
     },
     {
-      attributes: { Color: "White", Size: "M" },
+      attributes: [
+        { name: "Color", value: "White" },
+        { name: "Size", value: "M" },
+      ],
       price: 599,
       stock: 20,
       sku: "TP-WHT-M",
@@ -95,6 +104,8 @@ afterAll(async () => {
     if (createdProductId) {
       await product.findByIdAndDelete(createdProductId);
     }
+    // Delete any extra products created for variant search tests
+    await product.deleteMany({ name: /^Variant Search Test/i });
     if (testCategoryId) {
       await category.findByIdAndDelete(testCategoryId);
     }
@@ -116,7 +127,7 @@ afterAll(async () => {
 // ─── CREATE PRODUCT ──────────────────────────────────────
 
 describe("POST /products/", () => {
-  it("should create a product with variants as ADMIN", async () => {
+  it("should create a product with EAV variant attributes as ADMIN", async () => {
     const res = await request(app)
       .post("/products/")
       .set("Authorization", `Bearer ${adminToken}`)
@@ -132,6 +143,13 @@ describe("POST /products/", () => {
     expect(res.body.product.variants[0]).toHaveProperty("stock");
     expect(res.body.product.variants[0]).toHaveProperty("sku");
     expect(res.body.product.variants[0]).toHaveProperty("attributes");
+
+    // Verify EAV structure
+    const attrs = res.body.product.variants[0].attributes;
+    expect(Array.isArray(attrs)).toBe(true);
+    expect(attrs[0]).toHaveProperty("name");
+    expect(attrs[0]).toHaveProperty("value");
+    expect(attrs.find((a) => a.name === "Color").value).toBe("Black");
 
     createdProductId = res.body.product._id;
     createdProductSlug = res.body.product.slug;
@@ -245,7 +263,7 @@ describe("GET /products/", () => {
 // ─── GET PRODUCT BY SLUG ────────────────────────────────
 
 describe("GET /products/:slug", () => {
-  it("should return product by slug with variants", async () => {
+  it("should return product by slug with EAV variant attributes", async () => {
     const res = await request(app).get(`/products/${createdProductSlug}`);
 
     expect(res.status).toBe(200);
@@ -253,6 +271,12 @@ describe("GET /products/:slug", () => {
     expect(res.body.product.slug).toBe(createdProductSlug);
     expect(res.body.product.name).toBe(TEST_PRODUCT.name);
     expect(res.body.product.variants).toHaveLength(3);
+
+    // Verify EAV structure in fetched product
+    const firstVariant = res.body.product.variants[0];
+    expect(Array.isArray(firstVariant.attributes)).toBe(true);
+    expect(firstVariant.attributes[0]).toHaveProperty("name");
+    expect(firstVariant.attributes[0]).toHaveProperty("value");
   });
 
   it("should return 404 for non-existent slug", async () => {
@@ -268,7 +292,10 @@ describe("PUT /products/:id", () => {
   it("should update product variants as ADMIN", async () => {
     const updatedVariants = [
       {
-        attributes: { Color: "Red", Size: "L" },
+        attributes: [
+          { name: "Color", value: "Red" },
+          { name: "Size", value: "L" },
+        ],
         price: 1299,
         stock: 8,
         sku: "TP-RED-L",
@@ -292,7 +319,7 @@ describe("PUT /products/:id", () => {
     const res = await request(app)
       .put(`/products/${createdProductId}`)
       .set("Authorization", `Bearer ${regularToken}`)
-      .send({ variants: [{ attributes: { Color: "Blue" }, price: 1, stock: 1, sku: "X" }] });
+      .send({ variants: [{ attributes: [{ name: "Color", value: "Blue" }], price: 1, stock: 1, sku: "X" }] });
 
     expect(res.status).toBe(403);
   });
@@ -300,7 +327,7 @@ describe("PUT /products/:id", () => {
   it("should reject update without auth", async () => {
     const res = await request(app)
       .put(`/products/${createdProductId}`)
-      .send({ variants: [{ attributes: { Color: "Blue" }, price: 1, stock: 1, sku: "X" }] });
+      .send({ variants: [{ attributes: [{ name: "Color", value: "Blue" }], price: 1, stock: 1, sku: "X" }] });
 
     expect(res.status).toBe(401);
   });
@@ -309,9 +336,208 @@ describe("PUT /products/:id", () => {
     const res = await request(app)
       .put("/products/000000000000000000000000")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ variants: [{ attributes: { Color: "Blue" }, price: 100, stock: 5, sku: "XX" }] });
+      .send({ variants: [{ attributes: [{ name: "Color", value: "Blue" }], price: 100, stock: 5, sku: "XX" }] });
 
     expect(res.status).toBe(404);
+  });
+});
+
+// ─── VARIANT-BASED SEARCHING ────────────────────────────
+
+describe("GET /products/ (variant attribute filtering)", () => {
+  let variantSearchProductIds = [];
+
+  beforeAll(async () => {
+    // Create products with known variant attributes for deterministic testing
+    const category_ = await category.findById(testCategoryId);
+    const productsToCreate = [
+      {
+        name: `Variant Search Test Red-L ${Date.now()}`,
+        description: "Product with Red/L variant",
+        categoryId: testCategoryId,
+        categoryPath: category_.path || [category_._id],
+        images: ["https://picsum.photos/400/400"],
+        variants: [
+          {
+            attributes: [
+              { name: "Color", value: "Red" },
+              { name: "Size", value: "L" },
+            ],
+            price: 800,
+            stock: 10,
+            sku: `VST-RED-L-${Date.now()}`,
+          },
+        ],
+        slug: `variant-search-test-red-l-${Date.now()}`,
+        createdBy: "test-admin",
+        isActive: true,
+      },
+      {
+        name: `Variant Search Test Blue-M ${Date.now()}`,
+        description: "Product with Blue/M variant",
+        categoryId: testCategoryId,
+        categoryPath: category_.path || [category_._id],
+        images: ["https://picsum.photos/400/400"],
+        variants: [
+          {
+            attributes: [
+              { name: "Color", value: "Blue" },
+              { name: "Size", value: "M" },
+            ],
+            price: 1200,
+            stock: 5,
+            sku: `VST-BLU-M-${Date.now()}`,
+          },
+        ],
+        slug: `variant-search-test-blue-m-${Date.now()}`,
+        createdBy: "test-admin",
+        isActive: true,
+      },
+      {
+        name: `Variant Search Test Multi ${Date.now()}`,
+        description: "Product with multiple variants",
+        categoryId: testCategoryId,
+        categoryPath: category_.path || [category_._id],
+        images: ["https://picsum.photos/400/400"],
+        variants: [
+          {
+            attributes: [
+              { name: "Color", value: "Red" },
+              { name: "Size", value: "M" },
+              { name: "Material", value: "Cotton" },
+            ],
+            price: 600,
+            stock: 15,
+            sku: `VST-RED-M-COT-${Date.now()}`,
+          },
+          {
+            attributes: [
+              { name: "Color", value: "Green" },
+              { name: "Size", value: "XL" },
+              { name: "Material", value: "Polyester" },
+            ],
+            price: 750,
+            stock: 8,
+            sku: `VST-GRN-XL-POL-${Date.now()}`,
+          },
+        ],
+        slug: `variant-search-test-multi-${Date.now()}`,
+        createdBy: "test-admin",
+        isActive: true,
+      },
+    ];
+
+    // Insert directly into MongoDB for deterministic test data
+    for (const p of productsToCreate) {
+      const created = await product.create(p);
+      variantSearchProductIds.push(created._id);
+    }
+  });
+
+  afterAll(async () => {
+    // Clean up variant search test products
+    for (const id of variantSearchProductIds) {
+      await product.findByIdAndDelete(id);
+    }
+  });
+
+  it("should filter products by a single variant attribute (Color=Red)", async () => {
+    const res = await request(app).get(
+      `/products/?category=${testCategorySlug}&attr_Color=Red`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    if (res.body.data.length > 0) {
+      res.body.data.forEach((p) => {
+        // At least one variant should have Color=Red
+        const hasRedVariant = p.variants.some((v) =>
+          v.attributes.some((a) => a.name === "Color" && a.value === "Red")
+        );
+        expect(hasRedVariant).toBe(true);
+      });
+    }
+  });
+
+  it("should filter products by multiple variant attributes (Color=Red AND Size=M)", async () => {
+    const res = await request(app).get(
+      `/products/?category=${testCategorySlug}&attr_Color=Red&attr_Size=M`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    if (res.body.data.length > 0) {
+      res.body.data.forEach((p) => {
+        // At least one variant should have BOTH Color=Red AND Size=M
+        const hasMatchingVariant = p.variants.some((v) => {
+          const hasRed = v.attributes.some(
+            (a) => a.name === "Color" && a.value === "Red"
+          );
+          const hasMedium = v.attributes.some(
+            (a) => a.name === "Size" && a.value === "M"
+          );
+          return hasRed && hasMedium;
+        });
+        expect(hasMatchingVariant).toBe(true);
+      });
+    }
+  });
+
+  it("should return empty results for non-matching variant filters", async () => {
+    const res = await request(app).get(
+      `/products/?category=${testCategorySlug}&attr_Color=Magenta&attr_Size=XXXL`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveLength(0);
+  });
+
+  it("should combine variant filters with price range filters", async () => {
+    const res = await request(app).get(
+      `/products/?category=${testCategorySlug}&attr_Color=Red&minPrice=100&maxPrice=1000`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    if (res.body.data.length > 0) {
+      res.body.data.forEach((p) => {
+        // Should have a Red variant
+        const hasRedVariant = p.variants.some((v) =>
+          v.attributes.some((a) => a.name === "Color" && a.value === "Red")
+        );
+        expect(hasRedVariant).toBe(true);
+
+        // Should have at least one variant in price range
+        const hasPriceMatch = p.variants.some(
+          (v) => v.price >= 100 && v.price <= 1000
+        );
+        expect(hasPriceMatch).toBe(true);
+      });
+    }
+  });
+
+  it("should filter by a single attribute (Material=Cotton)", async () => {
+    const res = await request(app).get(
+      `/products/?category=${testCategorySlug}&attr_Material=Cotton`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    if (res.body.data.length > 0) {
+      res.body.data.forEach((p) => {
+        const hasCottonVariant = p.variants.some((v) =>
+          v.attributes.some(
+            (a) => a.name === "Material" && a.value === "Cotton"
+          )
+        );
+        expect(hasCottonVariant).toBe(true);
+      });
+    }
   });
 });
 

@@ -42,6 +42,7 @@ export const getProduct = async(req,res,next) => {
       category,
       minPrice,
       maxPrice,
+      ...rest
     }  = req.query;
 
     page = parseInt(page);
@@ -56,11 +57,22 @@ export const getProduct = async(req,res,next) => {
     if(limit>100)
       limit = 100;
 
+    // Extract variant attribute filters from attr_ prefixed query params
+    // e.g. ?attr_Color=Black&attr_Size=M → { Color: "Black", Size: "M" }
+    const variantFilters = {};
+    for (const [key, value] of Object.entries(rest)) {
+      if (key.startsWith("attr_") && value) {
+        const attrName = key.slice(5); // remove "attr_" prefix
+        variantFilters[attrName] = value;
+      }
+    }
+
     const filters = {
       name,
       category,
       minPrice,
       maxPrice,
+      variantFilters: Object.keys(variantFilters).length > 0 ? variantFilters : undefined,
     };
 
     const options = {

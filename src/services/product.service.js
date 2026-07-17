@@ -83,7 +83,7 @@ export const createProduct = async(productData) =>{
 // ============================================================
 
 export const getProducts = async (filters, options) => {
-  const { name, category, minPrice, maxPrice } = filters;
+  const { name, category, minPrice, maxPrice, variantFilters } = filters;
   const { page, limit } = options;
 
   const skip = (page - 1) * limit;
@@ -132,6 +132,28 @@ export const getProducts = async (filters, options) => {
     equals: { path: "isActive", value: true },
   });
 
+  // Build the variant attribute match stage for EAV filtering
+  const variantMatchStage = {};
+  if (variantFilters && Object.keys(variantFilters).length > 0) {
+    const elemMatchClauses = Object.entries(variantFilters).map(
+      ([attrName, attrValue]) => ({
+        $elemMatch: { name: attrName, value: attrValue },
+      })
+    );
+
+    if (elemMatchClauses.length === 1) {
+      variantMatchStage["variants.attributes"] = elemMatchClauses[0].$elemMatch;
+    } else {
+      variantMatchStage["variants"] = {
+        $elemMatch: {
+          attributes: {
+            $all: elemMatchClauses,
+          },
+        },
+      };
+    }
+  }
+
   const pipeline = [
     {
       $search: {
@@ -143,9 +165,14 @@ export const getProducts = async (filters, options) => {
         },
       },
     },
-    { $skip: skip },
-    { $limit: limit },
   ];
+
+  // Add variant attribute filtering after $search
+  if (Object.keys(variantMatchStage).length > 0) {
+    pipeline.push({ $match: variantMatchStage });
+  }
+
+  pipeline.push({ $skip: skip }, { $limit: limit });
 
   const products = await product.aggregate(pipeline);
 
@@ -163,13 +190,18 @@ export const getProducts = async (filters, options) => {
           },
         },
       },
-      { $count: "total" },
     ];
+
+    if (Object.keys(variantMatchStage).length > 0) {
+      countPipeline.push({ $match: variantMatchStage });
+    }
+
+    countPipeline.push({ $count: "total" });
 
     const countResult = await product.aggregate(countPipeline);
     totalCount = countResult.length > 0 ? countResult[0].total : 0;
   } else {
-    const query = { isActive: true };
+    const query = { isActive: true, ...variantMatchStage };
 
     if (findCategory) query.categoryPath = findCategory._id;
     if (minPrice) query["variants.price"] = { ...query["variants.price"], $gte: Number(minPrice) };

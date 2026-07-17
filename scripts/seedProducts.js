@@ -366,8 +366,9 @@ const generateSku = (productName, attributes) => {
     .slice(0, 2)
     .map((w) => w.substring(0, 3).toUpperCase())
     .join("-");
-  const attrPart = Object.values(attributes)
-    .map((v) => v.substring(0, 3).toUpperCase())
+  // attributes is now an EAV array: [{ name, value }]
+  const attrPart = attributes
+    .map((a) => a.value.substring(0, 3).toUpperCase())
     .join("-");
   return `${namePart}-${attrPart}`;
 };
@@ -408,14 +409,16 @@ const buildVariants = (profile, productName) => {
   }
 
   return combos.map((combo) => {
-    const attributes = { ...extra, ...combo };
+    const merged = { ...extra, ...combo };
+    // Convert to EAV array: [{ name, value }]
+    const attributes = Object.entries(merged).map(([name, value]) => ({ name, value }));
     // Slight price variation per variant (±10%)
     const priceVariation = Math.round(basePrice * (1 + (Math.random() * 0.2 - 0.1)));
     return {
       attributes,
       price: priceVariation,
       stock: faker.number.int({ min: 0, max: 100 }),
-      sku: generateSku(productName, combo),
+      sku: generateSku(productName, attributes),
     };
   });
 };
