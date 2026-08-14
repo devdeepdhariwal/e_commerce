@@ -4,3 +4,7 @@ node_modules
 
 /src/generated/prisma
 test-results.json
+
+# Local learning notes — not part of the app
+ecommerce_backend_plan.pdf
+instructions.md

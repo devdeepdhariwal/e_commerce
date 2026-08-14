@@ -44,6 +44,7 @@ describe("POST /auth/register", () => {
     expect(res.body.message).toBe("User registered successfully");
     expect(res.body.user).toHaveProperty("id");
     expect(res.body.user.email).toBe(TEST_USER.email.toLowerCase());
+    expect(res.body.user.isEmailVerified).toBe(false);
   });
 
   it("should reject registration with missing fields", async () => {
@@ -73,7 +74,21 @@ describe("POST /auth/register", () => {
 // ─── LOGIN ───────────────────────────────────────────────
 
 describe("POST /auth/login", () => {
+  it("should reject login when email is not verified", async () => {
+    const res = await request(app)
+      .post("/auth/login")
+      .send({ email: TEST_USER.email, password: TEST_USER.password });
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe("Please verify your email");
+  });
+
   it("should login and return accessToken + set cookie", async () => {
+    await prisma.user.update({
+      where: { email: TEST_USER.email.toLowerCase() },
+      data: { isEmailVerified: true },
+    });
+
     const res = await request(app)
       .post("/auth/login")
       .send({ email: TEST_USER.email, password: TEST_USER.password });

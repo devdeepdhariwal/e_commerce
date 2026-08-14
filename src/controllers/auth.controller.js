@@ -9,7 +9,10 @@ import {
   deleteRefreshToken,
   getUserById,
   logoutUser,
+  sendOtpService,
+  verifyOtpService
 } from "../services/auth.service.js";
+
 import AppError from "../utils/AppError.js";
 
 
@@ -32,6 +35,7 @@ export const register = async (req, res, next) => {
     }
 
     const user = await registerUser({ name, email, password });
+    await sendOtpService(email);
 
     return res.status(201).json({
       message: "User registered successfully",
@@ -39,6 +43,7 @@ export const register = async (req, res, next) => {
         id: user.id,
         name: user.name,
         email: user.email,
+        isEmailVerified : user.isEmailVerified,
       },
     });
   } catch (error) {
@@ -165,4 +170,39 @@ export async function getMe(req, res, next) {
   } catch (error) {
     next(error); 
   }
+}
+
+export const sendOtp = async(req,res,next) => {
+try {
+  const email = req.body.email;
+  if(!email){
+    throw new AppError("Email is required",400)
+  }
+  await sendOtpService(email)
+  return res.status(200).json({
+    success : true,
+    message : "If this mail is registered, we sent a code"
+  })
+} catch (error) {
+ next(error) 
+}
+}
+
+export const verifyOtp = async(req,res,next) => {
+try {
+  const {email, otp} = req.body;
+if(!email){
+  throw new AppError("Email is required",400)
+}
+if(!otp){
+  throw new AppError("Otp is required",400)
+}
+await verifyOtpService(email,otp)
+return res.status(200).json({
+  success : true,
+  message : "Email is Successfully Verified"
+})
+} catch (error) {
+  next(error)
+}
 }

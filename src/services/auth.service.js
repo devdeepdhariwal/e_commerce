@@ -5,6 +5,7 @@ import AppError from "../utils/AppError.js";
 import redis from "../config/redis.js";
 import jwt from "jsonwebtoken";
 import crypto from "crypto"
+import { sendmail } from "../utils/mailer.js";
 
 
 export const registerUser = async ({ name, email, password }) => {
@@ -28,6 +29,7 @@ export const registerUser = async ({ name, email, password }) => {
          id: true,
          name: true,
          email: true,
+         isEmailVerified : true,
       }
    })
    return user;
@@ -46,6 +48,9 @@ export const loginUser = async ({ email, password }) => {
    const isMatch = await compareHash(password, user.password);
    if (!isMatch) {
       throw new AppError("Invalid Credentials", 401);
+   }
+   if(!user.isEmailVerified){
+      throw new AppError("Please verify your email",403)
    }
    const { password: _, ...safeUser } = user;
    return safeUser;
@@ -106,4 +111,56 @@ export const logoutUser = async (accessToken, refreshToken) => {
    })
 
 
+}
+
+export const sendOtpService = async(email) =>{
+if(!email){
+   throw new AppError("Email is required",400)
+}
+const normalisedEmail = email.trim().toLowerCase();
+const user = await prisma.user.findUnique({where : {email : normalisedEmail}})
+if(!user || user.isEmailVerified){
+   return
+}
+const otp = crypto.randomInt(100000,1000000).toString();
+const otpHash = crypto.createHash("sha256").update(otp).digest("hex")
+const key = `otp:${normalisedEmail}`
+await redis.set(key,otpHash,"EX", 600)
+await sendmail({
+   to : normalisedEmail,
+   subject: "Your Verification code",
+   text : `Your code is ${otp}. It will expire in 10 minutes`
+})
+return 
+}
+
+export const verifyOtpService = async(email,otp) => {
+if(!email){
+   throw new AppError("Email is required",400)
+}
+
+if(!otp){
+   throw new AppError("Otp is required",400)
+}
+const normalisedEmail = email.trim().toLowerCase();
+const otpHash = crypto.createHash("sha256").update(String(otp)).digest("hex")
+const key = `otp:${normalisedEmail}`
+const storedHash = await redis.get(key)
+if(!storedHash || storedHash != otpHash){
+   throw new AppError("Invalid or Expired Otp", 400)
+}
+const userFound = await prisma.user.findUnique({where : {email : normalisedEmail}})
+if(!userFound){
+   throw new AppError("Invalid or Expired Otp",400)
+}
+await prisma.user.update({where : {
+   email : normalisedEmail
+   },
+   data :{
+   isEmailVerified : true 
+   }
+})
+
+await redis.del(key)
+return
 }

@@ -36,6 +36,7 @@ jobs:
       REFRESH_TOKEN_SECRET: test-refresh-secret-key-for-ci
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       REDIS_URL: redis://localhost:6379
+      CART_EXPIRES: "3600"
       NODE_ENV: development
 
     steps:

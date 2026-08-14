@@ -76,10 +76,10 @@ beforeAll(async () => {
   // Register admin user
   await request(app).post("/auth/register").send(ADMIN_USER);
 
-  // Promote to ADMIN directly in DB
+  // Promote to ADMIN and mark verified (login is blocked until verify)
   await prisma.user.update({
     where: { email: ADMIN_USER.email.toLowerCase() },
-    data: { role: "ADMIN" },
+    data: { role: "ADMIN", isEmailVerified: true },
   });
 
   // Login as admin
@@ -90,6 +90,10 @@ beforeAll(async () => {
 
   // Register and login as regular user
   await request(app).post("/auth/register").send(REGULAR_USER);
+  await prisma.user.update({
+    where: { email: REGULAR_USER.email.toLowerCase() },
+    data: { isEmailVerified: true },
+  });
   const regularLogin = await request(app)
     .post("/auth/login")
     .send({ email: REGULAR_USER.email, password: REGULAR_USER.password });

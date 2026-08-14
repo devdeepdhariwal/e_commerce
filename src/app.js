@@ -3,6 +3,7 @@ import cors from "cors";
 import authRoutes from "./routes/auth.routes.js";
 import productRoutes from "./routes/product.routes.js";
 import categoryRoutes from "./routes/categories.routes.js";
+import cartRoutes from "./routes/cart.routes.js"
 import errorHandler from "./middlewares/errorHandler.js";
 import cookieParser from "cookie-parser";
 
@@ -18,7 +19,8 @@ app.use(cookieParser());
 
 app.use("/auth", authRoutes);
 app.use("/products", productRoutes);
-app.use("/categories", categoryRoutes)
+app.use("/categories", categoryRoutes);
+app.use("/cart",cartRoutes);
 app.use(errorHandler);
 
 export default app;
