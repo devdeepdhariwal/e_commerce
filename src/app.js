@@ -4,6 +4,7 @@ import authRoutes from "./routes/auth.routes.js";
 import productRoutes from "./routes/product.routes.js";
 import categoryRoutes from "./routes/categories.routes.js";
 import cartRoutes from "./routes/cart.routes.js"
+import addressRoutes from "./routes/address.routes.js"
 import errorHandler from "./middlewares/errorHandler.js";
 import cookieParser from "cookie-parser";
 
@@ -21,6 +22,7 @@ app.use("/auth", authRoutes);
 app.use("/products", productRoutes);
 app.use("/categories", categoryRoutes);
 app.use("/cart",cartRoutes);
+app.use("/addresses",addressRoutes);
 app.use(errorHandler);
 
 export default app;

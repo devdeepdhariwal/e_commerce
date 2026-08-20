@@ -142,3 +142,66 @@ export const deleteCart = async(userId) =>{
 await Redis.del(key);
  return getCart(userId)
 }
+
+export const revalidateCart = async (userId) => {
+  const key = `cart:${userId}`;
+  const hashdata = await Redis.hgetall(key);
+
+  if (!hashdata || Object.keys(hashdata).length === 0) {
+    throw new AppError("Cart is empty", 400);
+  }
+
+  let pricesChanged = false;
+  let stockAdjusted = false;
+  const removed = [];
+
+  for (const [field, value] of Object.entries(hashdata)) {
+    const item = JSON.parse(value);
+    const product = await Product.findById(item.productId, {
+      name: 1,
+      images: 1,
+      isActive: 1,
+      variants: 1,
+    });
+    const variant = product?.variants.find((v) => v.sku === item.sku);
+
+    if (!product || !product.isActive || !variant) {
+      await Redis.hdel(key, field);
+      removed.push(item);
+      continue;
+    }
+
+    if (Number(item.price) !== Number(variant.price)) {
+      item.price = variant.price;
+      pricesChanged = true;
+    }
+
+    if (item.quantity > variant.stock) {
+      if (variant.stock === 0) {
+        await Redis.hdel(key, field);
+        removed.push(item);
+        continue;
+      }
+      item.quantity = variant.stock;
+      stockAdjusted = true;
+    }
+
+    item.name = product.name;
+    item.image = product.images?.[0] || null;
+    await Redis.hset(key, field, JSON.stringify(item));
+  }
+
+  const remaining = await Redis.hlen(key);
+  if (remaining === 0) {
+    await Redis.del(key);
+  } else {
+    await Redis.expire(key, CART_EXPIRES);
+  }
+
+  const cart = await getCart(userId);
+  if (cart.items.length === 0) {
+    throw new AppError("Cart is empty", 400);
+  }
+
+  return { cart, pricesChanged, stockAdjusted, removed };
+};

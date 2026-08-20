@@ -88,6 +88,7 @@ export async function getUserById(userId) {
          email: true,
          createdAt: true,
          role: true,
+         isEmailVerified : true,
       }
    })
 

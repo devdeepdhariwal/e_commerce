@@ -2,6 +2,7 @@ import Category from "../models/category.model.js"
 import AppError from "../utils/AppError.js";
 import mongoose from "mongoose";
 import Product from "../models/product.model.js";
+import { invalidateCategoriesCache } from "../middlewares/cache.js";
 
 const generateSlug = (name) =>{
     return name
@@ -49,6 +50,7 @@ else{
     })
 }
 
+await invalidateCategoriesCache();
 return createdCategory;
 
 }
@@ -99,5 +101,6 @@ export const deleteCategory = async(id) =>{
     runValidators: true,
   }
 )
+await invalidateCategoriesCache();
 return updatedCategory;
 }

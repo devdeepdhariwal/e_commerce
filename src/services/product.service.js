@@ -1,6 +1,7 @@
 import Category from "../models/category.model.js";
 import product from "../models/product.model.js";
 import AppError from "../utils/AppError.js";
+import { invalidateProductListCache } from "../middlewares/cache.js";
 
 const generateSlug = (name) =>{
     return name
@@ -37,6 +38,7 @@ export const createProduct = async(productData) =>{
         isActive : productData.isActive
     })
 
+    await invalidateProductListCache();
     return createdProduct;
 }
 
@@ -255,7 +257,7 @@ if(updatedData.categoryId){
     throw new AppError("Product not found", 404)
    }
 
-
+   await invalidateProductListCache();
 return updatedProduct
 }
 
@@ -265,5 +267,6 @@ export const deleteProduct = async(id) =>{
     if(!deletedProduct){
         throw new AppError("Product not found",404)
     }
+    await invalidateProductListCache();
     return deletedProduct
 }
