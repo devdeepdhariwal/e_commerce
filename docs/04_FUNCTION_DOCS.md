@@ -1,172 +1,217 @@
-# ⚙️ Function Documentation
+# ⚙️ Critical Function Documentation
 
-> Only non-trivial functions with meaningful logic are documented here.
+> Comprehensive breakdown of mission-critical, non-trivial functions implementing core business rules, concurrency safety, and cryptographic security.
 
 ---
 
-## 1. `generateSlug(name)`
+## 1. `checkout(userId, addressId)`
+
+| Detail | Value |
+|---|---|
+| **File** | `src/services/order.service.js` |
+| **Purpose** | Execute atomic, concurrency-safe checkout converting a Redis cart into a confirmed order |
+| **Input** | `userId` (UUID string), `addressId` (UUID string) |
+| **Output** | Object containing PostgreSQL `order` entity and `razorpayOrder` payload |
+
+### Internal Logic:
+1. **Concurrency Guard:** Sets Redis distributed lock `checkout_lock:${userId}` with `EX 30` and `NX` flag. If key already exists $\rightarrow$ throws `AppError("Checkout already in progress", 409)`.
+2. **Cart Revalidation:** Invokes `revalidateCart(userId)`. If any prices changed, stock was adjusted, or items were removed $\rightarrow$ throws 409 requesting client re-confirmation.
+3. **Address Verification:** Fetches shipping address from PostgreSQL confirming ownership by `userId`.
+4. **Item Verification:** Loops through items, cross-referencing MongoDB product and variant data for price and quantity consistency.
+5. **Atomic Stock Decrement Loop:** For each item, executes atomic MongoDB update:
+   ```javascript
+   Product.updateOne(
+     { _id: line.productId, "variants.sku": line.sku, "variants.stock": { $gte: line.quantity } },
+     { $inc: { "variants.$.stock": -line.quantity } }
+   );
+   ```
+6. **Compensating Rollback:** If any single item update fails (`modifiedCount === 0`, indicating stock depletion during checkout), loops through all previously deducted items and increments their stock back:
+   ```javascript
+   Product.updateOne(
+     { _id: item.productId, "variants.sku": item.sku },
+     { $inc: { "variants.$.stock": item.quantity } }
+   );
+   ```
+   Throws `AppError("Item out of stock", 409)`.
+7. **Payment Order Creation:** Calls Razorpay SDK `orders.create({ amount, currency: "INR" })` (amount in paise).
+8. **Prisma Relational Transaction:** Inside `prisma.$transaction`:
+   - Creates `Order` record in `PENDING` state with full address snapshot fields.
+   - Creates corresponding `OrderItem` records with unit price, SKU, name, and quantity.
+9. **Lock Release:** Releases `checkout_lock:${userId}` in a `finally` block to guarantee unlock even if downstream calls fail.
+
+**Why It Matters:** Prevents race conditions, avoids overselling under high concurrency, guarantees database inventory consistency across failures via manual compensating transactions, and captures a permanent immutable snapshot of the shipping address at the moment of order placement.
+
+---
+
+## 2. `revalidateCart(userId)`
+
+| Detail | Value |
+|---|---|
+| **File** | `src/services/cart.service.js` |
+| **Purpose** | Reconcile in-memory Redis cart items with current MongoDB product state |
+| **Input** | `userId` (String) |
+| **Output** | `{ cart, pricesChanged, stockAdjusted, removed }` |
+
+### Internal Logic:
+1. Retrieves raw cart JSON from `cart:${userId}` in Redis.
+2. Iterates over every line item:
+   - Queries MongoDB product: `Product.findById(item.productId)`.
+   - If product is missing or `isActive === false` $\rightarrow$ removes item from cart and adds to `removed` list.
+   - Locates variant by SKU. If variant not found $\rightarrow$ removes item.
+   - If product price differs from cached cart price $\rightarrow$ updates cart item price, marks `pricesChanged = true`.
+   - If requested quantity exceeds current available stock $\rightarrow$ clamps item quantity to available stock, marks `stockAdjusted = true`. (If stock is 0 $\rightarrow$ removes item).
+3. If changes occurred $\rightarrow$ updates Redis cart and resets expiration timer.
+4. Returns the sanitized cart and change status flags.
+
+**Why It Matters:** Users often leave items in their cart for days. This function guarantees that checkouts never proceed with stale prices, deleted products, or quantities that exceed real inventory.
+
+---
+
+## 3. `handleRazorpayWebhook(rawBody, signature)`
+
+| Detail | Value |
+|---|---|
+| **File** | `src/services/webhook.service.js` |
+| **Purpose** | Validate Razorpay HMAC signature and settle order fulfillment |
+| **Input** | `rawBody` (Buffer or raw string), `signature` (header value string) |
+| **Output** | `{ received: true }` |
+
+### Internal Logic:
+1. Computes expected HMAC-SHA256 signature using `crypto.createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)` on the untouched raw payload.
+2. Validates signatures using constant-time `crypto.timingSafeEqual` to prevent timing attacks.
+3. If valid and event is `payment.captured` or `order.paid`:
+   - Extracts `razorpayOrderId` and `razorpayPaymentId`.
+   - Finds corresponding `Order` in PostgreSQL.
+   - Updates `Order.status = "PAID"`.
+   - Upserts `Payment` record with status `CAPTURED` and amount paid.
+   - Purges user's shopping cart in Redis (`cart:${order.userId}`).
+4. Completely idempotent: If order is already `PAID`, gracefully returns success.
+
+**Why It Matters:** Secures revenue collection. Eliminates webhook spoofing attacks and ensures order payment status is settled reliably, even if user closes the browser before frontend redirection completes.
+
+---
+
+## 4. `getProducts(filters, options)`
 
 | Detail | Value |
 |---|---|
 | **File** | `src/services/product.service.js` |
-| **Purpose** | Convert a product name into a URL-friendly slug |
-| **Input** | `name` (String) — raw product name |
-| **Output** | String — lowercase, hyphenated slug |
+| **Purpose** | High-performance product catalog querying with Atlas Search, EAV filters, and dual pagination |
+| **Input** | `filters` (name, category, minPrice, maxPrice, attributes), `options` (page, limit, cursor) |
+| **Output** | `{ products, totalCount }` or `{ products, nextCursor, hasMore }` |
 
-**Internal Logic:**
-1. Convert to lowercase
-2. Trim whitespace
-3. Remove all non-word, non-space, non-hyphen characters (`/[^\w\s-]/g`)
-4. Replace spaces with single hyphens (`/\s+/g → "-"`)
-5. Collapse consecutive hyphens (`/-+/g → "-"`)
+### Internal Logic:
+1. **Dynamic Attribute Parser:** Extracts all `attr_<Name>=<Value>` query params and builds MongoDB match conditions for nested variant attributes:
+   ```javascript
+   "variants.attributes": { $all: [{ $elemMatch: { name, value } }] }
+   ```
+2. **Search Strategy Selection:**
+   - If `name` or text query present $\rightarrow$ constructs MongoDB Atlas Search compound pipeline (`should` fuzzy text matching, `filter` category/price range, `must` `isActive: true`).
+   - If standard catalog view $\rightarrow$ executes indexed Mongoose query with category subtree (`categoryPath: { $in: [...] }`) and price ranges.
+3. **Pagination Mode:**
+   - **Cursor Pagination:** If `cursor` is supplied $\rightarrow$ queries `{ _id: { $gt: cursor } }`, sorts `{ _id: 1 }`, and fetches `limit + 1` records to calculate `hasMore` and `nextCursor` without expensive `$skip` offsets.
+   - **Offset Pagination:** Calculates `(page - 1) * limit` and queries total count.
 
-**Example:** `"Nike Air Max 90!"` → `"nike-air-max-90"`
-
-**Why It Matters:** SEO-friendly URLs improve discoverability. The function also enables unique slug enforcement, preventing duplicate product entries.
-
----
-
-## 2. `registeruser({ name, email, password })`
-
-| Detail | Value |
-|---|---|
-| **File** | `src/services/auth.service.js` |
-| **Purpose** | Create a new user account with hashed password |
-| **Input** | Object with `name`, `email`, `password` |
-| **Output** | User object (id, name, email only — password excluded) |
-
-**Internal Logic:**
-1. Normalize email: `trim()` + `toLowerCase()`
-2. Check for existing user via `prisma.user.findUnique({ email })`
-3. If exists → throw `AppError("User Already Exists", 409)`
-4. Hash password with bcrypt (10 salt rounds)
-5. Create user via `prisma.user.create()` with `select` to exclude password from return
-6. Return safe user object
-
-**Why It Matters:** Demonstrates defense-in-depth — email normalization prevents duplicate accounts with case variations; password never leaves the service layer unhashed; response never includes password hash.
+**Why It Matters:** Enables high-speed catalog browsing across millions of SKUs with sub-second response times, flexible multi-faceted filtering, and scalable pagination.
 
 ---
 
-## 3. `loginUser({ email, password })`
-
-| Detail | Value |
-|---|---|
-| **File** | `src/services/auth.service.js` |
-| **Purpose** | Verify credentials and return user data |
-| **Input** | Object with `email`, `password` |
-| **Output** | User object without password field |
-
-**Internal Logic:**
-1. Normalize email
-2. Find user by email → if not found, throw `AppError("Invalid Credentials", 401)`
-3. Compare password with bcrypt → if mismatch, throw same generic error
-4. Destructure to remove password: `const { password: _, ...safeUser } = user`
-5. Return `safeUser`
-
-**Why It Matters:** Uses identical error messages for "user not found" and "wrong password" — this is a deliberate security pattern to prevent user enumeration attacks.
-
----
-
-## 4. `refreshToken(req, res, next)` — Controller
+## 5. `refreshToken(req, res, next)`
 
 | Detail | Value |
 |---|---|
 | **File** | `src/controllers/auth.controller.js` |
-| **Purpose** | Implement secure refresh token rotation |
-| **Input** | HTTP request with `refreshToken` cookie |
-| **Output** | New access token in JSON + new refresh token in cookie |
+| **Purpose** | Issue fresh credentials using single-use refresh token rotation |
+| **Input** | Express request containing `refreshToken` httpOnly cookie |
+| **Output** | New access token in JSON response and new rotated refresh token in cookie |
 
-**Internal Logic:**
-1. Read raw refresh token from `req.cookies.refreshToken`
-2. If missing → `AppError("Refresh token missing", 401)`
-3. Verify JWT signature → catch failures as "Invalid or expired"
-4. SHA-256 hash the raw token → lookup hash in Token table
-5. If not found → `AppError("Invalid refresh token", 401)` (token reuse detected)
-6. If expired → delete record + return error
-7. **Rotation:** Delete old token record → generate new refresh token → hash → store new record
-8. Fetch full user data → generate new access token
-9. Set new refresh token cookie + return new access token
+### Internal Logic:
+1. Reads `refreshToken` from `req.cookies`. If missing $\rightarrow$ 401 Unauthorized.
+2. Verifies cryptographic JWT signature against `REFRESH_TOKEN_SECRET`.
+3. Hashes token using SHA-256 and searches PostgreSQL `Token` table.
+4. If token hash is not found in database:
+   - **Replay Attack Warning:** Old token was already used or forged $\rightarrow$ rejects request with 401.
+5. Deletes used token record from PostgreSQL (`prisma.token.delete`).
+6. Generates brand new refresh token (7-day validity) and new access token (15-minute validity).
+7. Hashes new refresh token and writes new record to `Token` table.
+8. Attaches new refresh token in `httpOnly`, `SameSite=Strict`, `Secure` cookie and returns new `accessToken`.
 
-**Why It Matters:** This is the most security-critical function in the application. It implements refresh token rotation (RFC best practice), preventing token replay attacks. Each refresh token is single-use — if an attacker replays a stolen token after the legitimate user has refreshed, the lookup in step 4 fails.
-
----
-
-## 5. `getProducts(filters, options)`
-
-| Detail | Value |
-|---|---|
-| **File** | `src/services/product.service.js` |
-| **Purpose** | Query products using MongoDB Atlas Search with pagination |
-| **Input** | `filters` (name, category, minPrice, maxPrice), `options` (page, limit) |
-| **Output** | `{ products, totalCount }` |
-
-**Internal Logic:**
-1. Build three clause arrays: `mustClauses`, `shouldClauses`, `filterClauses`
-2. If `name` provided → add fuzzy text search to `shouldClauses` (maxEdits: 1)
-3. If `category` provided → add exact match to `filterClauses`
-4. If `minPrice`/`maxPrice` provided → add range filter (uses spread to handle partial ranges)
-5. Always add `must` clause: `isActive === true`
-6. Build aggregation pipeline: `$search` → `$skip` → `$limit`
-7. Execute pipeline + separate `countDocuments` for total
-8. Return both results
-
-**Why It Matters:** Demonstrates Atlas Search integration — far more powerful than basic regex queries. The fuzzy matching handles typos, and the compound query structure supports complex multi-field filtering.
+**Why It Matters:** Implements OAuth 2.0 / RFC 6749 best practices for refresh token rotation. If a refresh token is compromised and used by an attacker, the legitimate user's subsequent refresh attempt will fail, alerting the system to token theft.
 
 ---
 
-## 6. `authMiddleware(req, res, next)`
+## 6. `forgotPasswordService(email)` & `resetPasswordService(token, newPassword)`
 
 | Detail | Value |
 |---|---|
-| **File** | `src/middlewares/auth.middleware.js` |
-| **Purpose** | Verify JWT access token and attach user to request |
-| **Input** | HTTP request with `Authorization: Bearer <token>` header |
-| **Output** | Sets `req.user` with decoded JWT payload, calls `next()` |
+| **File** | `src/services/auth.service.js` |
+| **Purpose** | Secure out-of-band password recovery with short-lived tokens and session invalidation |
+| **Input** | `email` for forgot-password; `token` and `newPassword` for reset-password |
+| **Output** | Success confirmation messages |
 
-**Internal Logic:**
-1. Extract `Authorization` header → validate `Bearer ` prefix
-2. Split to get token → `jwt.verify()` with `ACCESS_TOKEN_SECRET`
-3. On success → `req.user = decoded` (contains `userId`, `role`) → `next()`
-4. On `TokenExpiredError` → 401 with "Token expired"
-5. On other errors → 401 with "Invalid token"
+### Internal Logic:
+- **Forgot Password:**
+  1. Looks up user by normalized email.
+  2. If user does not exist $\rightarrow$ returns generic success message immediately (prevents user enumeration).
+  3. Generates 32-byte cryptographically secure random token (`crypto.randomBytes(32).toString("hex")`).
+  4. Computes SHA-256 hash of token and stores in Redis: `SET reset_token:<hash> <userId> EX 900` (15-minute TTL).
+  5. Sends raw token in transactional email via Nodemailer.
+- **Reset Password:**
+  1. Computes SHA-256 hash of provided token and looks up key `reset_token:<hash>` in Redis.
+  2. If key does not exist or expired $\rightarrow$ throws `AppError("Invalid or expired reset token", 400)`.
+  3. Hashes `newPassword` using bcrypt (10 rounds) and updates `User.password` in PostgreSQL.
+  4. Deletes `reset_token:<hash>` from Redis.
+  5. Deletes all active refresh tokens in PostgreSQL for this user (`prisma.token.deleteMany({ where: { userId } })`), immediately revoking all existing login sessions across all devices.
 
-**Why It Matters:** The gateway function for all protected routes. Differentiates between expired tokens (client should refresh) and invalid tokens (client should re-login).
+**Why It Matters:** Protects account recovery against replay, brute-force, and session hijacking by strictly scoping reset tokens to 15 minutes and invalidating all existing device sessions upon password change.
 
 ---
 
-## 7. `authorise(requiredRole)`
+## 7. `logout(req, res, next)`
 
 | Detail | Value |
 |---|---|
-| **File** | `src/middlewares/authorise.js` |
-| **Purpose** | Higher-order function that returns role-checking middleware |
-| **Input** | `requiredRole` (String) — the role required for access |
+| **File** | `src/controllers/auth.controller.js` |
+| **Purpose** | Immediately revoke both refresh tokens and active access tokens |
+| **Input** | Authenticated request with Bearer access token and httpOnly cookie |
+| **Output** | 200 OK + cleared cookie |
+
+### Internal Logic:
+1. Deletes all user refresh token records from PostgreSQL.
+2. Extracts raw access token from `Authorization: Bearer <token>` header.
+3. Reads JWT `exp` timestamp and calculates remaining seconds: `Math.max(1, exp - Math.floor(Date.now() / 1000))`.
+4. Writes token into Redis blacklist: `SET blacklist:<accessToken> "1" EX <remainingSeconds>`.
+5. Clears `refreshToken` cookie on the client.
+
+**Why It Matters:** In traditional stateless JWT authentication, tokens remain valid until expiration even after logout. This function solves the "instant revocation" problem by blacklisting access tokens in Redis for their remaining lifetime.
+
+---
+
+## 8. `validate(schema, source)`
+
+| Detail | Value |
+|---|---|
+| **File** | `src/middlewares/validate.js` |
+| **Purpose** | Reusable middleware wrapping Zod schemas with Express 5 getter compatibility |
+| **Input** | `schema` (Zod schema), `source` ("body" \| "query" \| "params") |
 | **Output** | Express middleware function |
 
-**Internal Logic:**
-1. Returns a closure that captures `requiredRole`
-2. Inner function checks `req.user` exists → if not, 401
-3. Compares `req.user.role` with `requiredRole` → if mismatch, 403
-4. If matched → `next()`
+### Internal Logic:
+1. Executes `schema.safeParse(req[source])`.
+2. If validation fails $\rightarrow$ aggregates error messages into semicolon-separated string and calls `next(new AppError(messages, 400))`.
+3. In Express 5, `req.query` is defined with a prototype getter, causing direct assignment `req.query = parsedData` to throw a `TypeError`. The middleware uses safe property redefinition:
+   ```javascript
+   try {
+     req[source] = result.data;
+   } catch {
+     Object.defineProperty(req, source, {
+       value: result.data,
+       writable: true,
+       enumerable: true,
+       configurable: true,
+     });
+   }
+   ```
+4. Proceeds to `next()`.
 
-**Why It Matters:** Elegant use of closures to create reusable, configurable middleware. Usage: `authorise("ADMIN")` returns a middleware that only allows admins.
-
----
-
-## 8. `errorHandler(err, req, res, next)`
-
-| Detail | Value |
-|---|---|
-| **File** | `src/middlewares/errorHandler.js` |
-| **Purpose** | Centralized error handling with operational vs. unexpected distinction |
-| **Input** | Error object, Express req/res/next |
-| **Output** | JSON error response |
-
-**Internal Logic:**
-1. Extract `statusCode` (default 500) and `message` (default "something went wrong")
-2. If `err.isOperational === true` → return structured error with correct status code
-3. If not operational:
-   - Development mode → include full error object + stack trace
-   - Production mode → generic "Internal server error" (500)
-
-**Why It Matters:** Critical for both security (never leak stack traces in production) and DX (full debug info in development). The `isOperational` flag from `AppError` distinguishes "expected" errors (404, 409) from bugs.
+**Why It Matters:** Guarantees strict runtime validation and type coercion across all input channels while ensuring 100% compatibility with Express 5 request prototype behaviors.

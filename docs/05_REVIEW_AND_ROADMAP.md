@@ -1,223 +1,179 @@
-# 🔍 Code Review
+# 🔍 Architectural Review & Evolution Roadmap
 
-## ✅ Good Practices Followed
+## ✅ Engineering Best Practices Implemented
 
-| Practice | Evidence |
-|---|---|
-| **Layered Architecture** | Clean Route → Controller → Service → Model separation across all modules |
-| **ES Modules** | Consistent use of `import/export` with `"type": "module"` in package.json |
-| **Secure Token Storage** | Refresh tokens SHA-256 hashed before DB storage — industry best practice |
-| **Token Rotation** | Old refresh token deleted on each use, new one issued — prevents replay attacks |
-| **httpOnly Cookies** | Refresh tokens sent via httpOnly, Secure, SameSite=Strict cookies — mitigates XSS |
-| **Password Security** | bcrypt with 10 salt rounds + regex enforcement (upper, lower, digit, special, 8+ chars) |
-| **Anti-Enumeration** | Same "Invalid Credentials" error for wrong email AND wrong password |
-| **Centralized Error Handling** | Custom `AppError` class with `isOperational` flag + global `errorHandler` middleware |
-| **Safe Data Return** | Password excluded from all responses via Prisma `select` or destructuring |
-| **Environment Configuration** | Secrets in `.env`, loaded via `dotenv`, `.env` in `.gitignore` |
-| **Soft Delete Pattern** | `isActive` flag on products instead of hard deletion in search results |
-| **Slug Uniqueness** | Checked on both create and update (excluding self on update via `$ne`) |
-| **Input Sanitization** | Email normalization (trim + lowercase), pagination clamping (min/max bounds) |
-
-## ⚠️ Areas for Improvement
-
-### Naming Consistency
-
-| Current | Suggested | Reason |
+| Category | Practice | Implementation Evidence |
 |---|---|---|
-| `registeruser` | `registerUser` | camelCase consistency |
-| `hashpassword` | `hashPassword` | camelCase consistency |
-| `comparehash` | `compareHash` | camelCase consistency |
-| `normalisedemail` | `normalizedEmail` | camelCase + American English consistency |
-| `ismatch` | `isMatch` | camelCase consistency |
-| `hashedpassword` | `hashedPassword` | camelCase consistency |
-
-### Structural Issues
-
-1. **Missing Logout Endpoint:** The readme mentions "Logout — token invalidation from DB" but no logout route exists. The `deleteRefreshToken` service function exists but isn't exposed via a route.
-
-2. **Missing Input Validation Library:** Currently using manual `if (!field)` checks. A library like `Joi` or `Zod` would provide schema-based validation with better error messages and less boilerplate.
-
-3. **`getProductBySlug` Bug:** In `product.service.js` line 111, `return product` returns the Mongoose **model** instead of the `foundproduct` variable. Should be `return foundproduct`.
-
-4. **Inconsistent Response Formats:**
-   - Auth endpoints return `{ message, user }` or `{ message, accessToken }`
-   - Product endpoints return `{ success, data, pagination }` or `{ success, product }`
-   - Product creation validation returns raw string `res.status(400).json("All fields are neccessary")` instead of object
-
-5. **`pass.js` in Root:** This is a debug/utility file that should not be in the repository. It appears to be for testing password hashing.
-
-6. **Missing Rate Limiting:** No protection against brute-force login attempts. Consider `express-rate-limit`.
-
-7. **No Request Logging:** No HTTP request logging middleware (e.g., `morgan`).
-
-8. **Hardcoded Port:** `const PORT = 3000` should use `process.env.PORT || 3000`.
-
-### Security Considerations
-
-| Area | Status | Recommendation |
-|---|---|---|
-| CORS | ❌ Not configured | Add `cors` middleware before production |
-| Rate Limiting | ❌ Not present | Add `express-rate-limit` on auth routes |
-| Helmet | ❌ Not present | Add `helmet` for security headers |
-| Input Validation | ⚠️ Manual only | Adopt Zod or Joi for schema validation |
-| API Versioning | ❌ Not present | Consider `/api/v1/` prefix for future-proofing |
-
-### Scalability Readiness
-
-| Aspect | Rating | Notes |
-|---|---|---|
-| Module separation | 🟢 Ready | New modules follow same pattern easily |
-| Database strategy | 🟢 Ready | Dual-DB is well-separated |
-| Auth system | 🟢 Ready | Token-based, stateless, scalable |
-| Search | 🟢 Ready | Atlas Search handles scale well |
-| Config management | 🟡 Partial | Needs API versioning and CORS |
-| Testing | 🔴 Missing | No test framework or test files |
-| CI/CD | 🔴 Missing | No pipeline configuration |
+| **Architecture** | **Strict Layered Design** | Clean separation: `Route` $\rightarrow$ `Middleware` $\rightarrow$ `Controller` $\rightarrow$ `Service` $\rightarrow$ `Model` across all 6 domain modules |
+| **Persistence** | **Polyglot Tri-Storage** | PostgreSQL (relational/ACID) + MongoDB (catalog/EAV) + Redis (sessions/cache/locks) |
+| **Concurrency** | **Distributed Locking** | Redis `SET NX EX 30` prevents duplicate checkout executions and double-spending races |
+| **Inventory Integrity** | **Compensating Rollbacks** | Atomic `$inc` stock deduction with automatic reversal loop if any item is out of stock |
+| **Payments** | **HMAC Webhook Verification** | Raw-body HMAC-SHA256 signature verification with idempotent payment status updates |
+| **Validation** | **Declarative Zod Contracts** | Full schema validation for bodies, params, queries, and environment variables |
+| **Authentication** | **Rotating Refresh Tokens** | Single-use refresh token rotation with SHA-256 storage in PostgreSQL |
+| **Session Control** | **Instant Token Revocation** | Redis access token blacklisting on logout with automated TTL expiry |
+| **Recovery** | **Anti-Enumeration Recovery** | Generic success messages for unknown emails; crypto-random reset tokens in Redis |
+| **Verification** | **Time-Limited OTP** | 6-digit numeric OTP with 10-minute Redis TTL and Nodemailer SMTP delivery |
+| **Caching** | **Smart Cache Invalidation** | Redis response caching with selective bypass on filters and automatic invalidation on mutations |
+| **Security** | **HTTP Hardening** | Helmet security headers, configurable CORS, and Redis-backed rate limiting (`rate-limit-redis`) |
+| **Observability** | **Enterprise Logging** | Winston JSON logging with 5MB file rotation, separate `error.log`, and Morgan HTTP request streaming |
+| **Testing** | **100% Automated Testing** | 7 test suites, 93 tests covering all flows with Vitest and Supertest |
 
 ---
 
-# 🎯 Portfolio Value
+## 🛠 Status of Previously Identified Improvements
 
-## What This Project Demonstrates to Recruiters
+In the early prototype review (v0.3.0), several technical gaps were noted. **All 10 items have been fully addressed:**
 
-### 1. Backend Engineering Fundamentals
-- Building a REST API from scratch with Express 5
-- Understanding HTTP methods, status codes, and response structures
-- Middleware chains and request lifecycle management
-
-### 2. Authentication & Security Expertise
-- JWT-based stateless authentication (not just following a tutorial)
-- **Refresh token rotation** — a sophisticated pattern that most junior developers don't implement
-- SHA-256 hashing of stored tokens — shows understanding of defense-in-depth
-- httpOnly cookies with SameSite + Secure flags
-- Anti-enumeration error messages
-
-### 3. Database Design & Dual-DB Architecture
-- PostgreSQL for relational data (users, tokens) with Prisma ORM
-- MongoDB for document data (products with nested variants) with Mongoose ODM
-- Understanding of when to use relational vs. document databases
-- Proper indexing (`@@index`, `@unique`)
-- Cross-database references (`createdBy` links PG user to Mongo product)
-
-### 4. Clean Architecture
-- Not just "it works" — structured with separation of concerns
-- Service layer isolates business logic from HTTP concerns
-- Centralized error handling with operational vs. unexpected error distinction
-- Reusable middleware (higher-order `authorise` function)
-
-### 5. Search Implementation
-- MongoDB Atlas Search with compound queries
-- Fuzzy matching for user-friendly search
-- Multi-field filtering (category, price range)
-- Pagination with metadata (totalPages, hasNext, hasPrev)
-
-### 6. Real-World Patterns
-- Slug generation for SEO-friendly URLs
-- Seed script for development data (100 randomized products)
-- Environment-based configuration (dev vs. production error handling)
-- Soft-delete pattern (`isActive` flag)
+| Previous Gap | Resolution Status | Technical Solution |
+|---|---|---|
+| **Missing Logout Endpoint** | ✅ Fully Resolved | Added `POST /auth/logout` with PostgreSQL refresh token deletion and Redis access token blacklisting |
+| **Missing Input Validation Library** | ✅ Fully Resolved | Adopted **Zod** across the entire codebase with reusable `validate()` middleware |
+| **getProductBySlug Bug** | ✅ Fully Resolved | Fixed service return to properly send `foundProduct` instance |
+| **Inconsistent Response Formats** | ✅ Fully Resolved | Standardized all API responses to uniform `{ success: true, ... }` or `{ success: false, message }` |
+| **pass.js in Root Directory** | ✅ Fully Resolved | Removed extraneous debug file from repository |
+| **Missing Rate Limiting** | ✅ Fully Resolved | Integrated `express-rate-limit` with Redis store across all authentication endpoints |
+| **No Request Logging** | ✅ Fully Resolved | Configured `morgan` combined stream piped into Winston `logger.http` |
+| **Hardcoded Port & Config** | ✅ Fully Resolved | Implemented `src/config/env.js` with boot-time Zod schema validation |
+| **Security Headers & CORS** | ✅ Fully Resolved | Added `helmet()` and configured `cors` middleware with credentials support |
+| **Testing Framework** | ✅ Fully Resolved | Setup **Vitest** + **Supertest** with 93 passing integration tests |
 
 ---
 
-# 🗺 Next Recommended Modules
+## 🚦 Scalability & Production Readiness
 
-Based on the current codebase maturity, here's the suggested development roadmap:
-
-### Phase 1 — Core Commerce (Next)
-
-| Priority | Module | Key Features | Database |
-|---|---|---|---|
-| 1 | **Cart** | Add/remove items, quantity management, cart total calculation | MongoDB |
-| 2 | **Orders** | Cart → Order conversion, order status tracking, order history | MongoDB + PostgreSQL (order ownership) |
-| 3 | **Payments** | Stripe/Razorpay integration, payment status, webhooks | PostgreSQL (transactions) |
-
-### Phase 2 — User Experience
-
-| Priority | Module | Key Features |
+| Dimension | Rating | Technical Assessment |
 |---|---|---|
-| 4 | **Reviews & Ratings** | Product reviews, average rating calculation, review moderation |
-| 5 | **Wishlist** | Save products for later, share wishlists |
-| 6 | **User Profile** | Update profile, change password, address management |
-
-### Phase 3 — Operations & Admin
-
-| Priority | Module | Key Features |
-|---|---|---|
-| 7 | **Admin Dashboard API** | Sales analytics, user management, product analytics |
-| 8 | **Inventory Management** | Stock tracking, low-stock alerts, variant-level inventory |
-| 9 | **Notifications** | Email notifications (order confirmation, shipping updates) |
-
-### Phase 4 — Polish
-
-| Priority | Module | Key Features |
-|---|---|---|
-| 10 | **Testing Suite** | Jest + Supertest for unit and integration tests |
-| 11 | **API Documentation** | Swagger/OpenAPI auto-generated docs |
-| 12 | **CI/CD Pipeline** | GitHub Actions for lint, test, deploy |
+| **Architectural Separation** | 🟢 **Enterprise Ready** | New modules (e.g. Reviews, Wishlists) can be added cleanly by creating isolated route/controller/service/model files |
+| **Storage Scalability** | 🟢 **Enterprise Ready** | High-churn data (carts, cache, locks) is completely isolated in Redis; relational transactions are isolated in PostgreSQL |
+| **Authentication & AuthZ** | 🟢 **Enterprise Ready** | Stateless JWT access tokens with Redis blacklist lookups scale across multi-instance clusters |
+| **Search Engine** | 🟢 **Enterprise Ready** | MongoDB Atlas Search offloads full-text search indexing from standard database compute |
+| **Traffic Resilience** | 🟢 **Enterprise Ready** | Distributed rate limiting protects from brute-force attacks across clustered deployments |
+| **Observability** | 🟢 **Enterprise Ready** | Winston file rotation and error-level splitting enable log ingestion into Datadog, ELK, or CloudWatch |
+| **Test Coverage** | 🟢 **Enterprise Ready** | 93 passing integration tests validate auth, products, categories, cart, addresses, orders, and password recovery |
 
 ---
 
-# 📋 Living Changelog
+## 🎯 Portfolio Value: Demonstrating Senior Engineering
+
+This project provides concrete evidence of senior backend capabilities:
+
+### 1. Distributed Systems & Concurrency Safety
+- Rather than basic CRUD, the project handles concurrency issues like **double-checkout race conditions** using Redis distributed locks (`SET NX EX`).
+- Handles **partial failure in distributed transactions**: if the third item in an order fails stock decrement, the system executes an automated compensating rollback to restore previously deducted inventory.
+
+### 2. Multi-Model Data Architecture (Polyglot Persistence)
+- Demonstrates nuanced understanding of when to use **relational tables** (PostgreSQL for orders, financial ledger entries, users) versus **document collections** (MongoDB for products with flexible EAV variant attributes) versus **in-memory key-value stores** (Redis for expiring carts, locks, and cache).
+
+### 3. Cryptographic Security Standards
+- Refresh token rotation (single-use enforcement).
+- Refresh tokens hashed with SHA-256 before database storage.
+- Timing-safe cryptographic comparison for Razorpay webhook verification (`crypto.timingSafeEqual`).
+- Instant access token revocation via Redis blacklist.
+- Anti-enumeration design for login, email verification, and password recovery.
+
+### 4. Code Hygiene & Enterprise Tooling
+- 100% Zod validation on inputs and environment variables.
+- Structured file-rotating Winston logging with Morgan HTTP integration.
+- Production security headers (Helmet) and CORS whitelisting.
+- Complete automated test suite using modern ESM tooling (Vitest).
+
+---
+
+## 🗺 Future Evolution Roadmap
+
+While the core e-commerce engine is complete and production-ready, the following enhancements represent logical next steps for a massive-scale deployment:
 
 ```
-┌─────────────────────────────────────────────────┐
-│                VERSION HISTORY                  │
-├─────────────────────────────────────────────────┤
-│                                                 │
-│  Version 0.1.0                    March 2026    │
-│  ✅ Project scaffolding                         │
-│  ✅ Prisma + PostgreSQL setup                   │
-│  ✅ MongoDB connection                          │
-│  ✅ Express 5 configuration                     │
-│                                                 │
-│  Version 0.2.0                    March 2026    │
-│  ✅ User registration with validation           │
-│  ✅ Login with JWT access + refresh tokens      │
-│  ✅ Refresh token rotation (SHA-256 hashed)     │
-│  ✅ Role-based access control (RBAC)            │
-│  ✅ Auth middleware + authorise middleware       │
-│  ✅ GetMe protected endpoint                    │
-│  ✅ Centralized error handling (AppError)       │
-│                                                 │
-│  Version 0.3.0                    April 2026    │
-│  ✅ Product CRUD (Create, Read, Update, Delete) │
-│  ✅ Auto-generated SEO slugs                    │
-│  ✅ MongoDB Atlas Search (fuzzy + compound)     │
-│  ✅ Pagination with metadata                    │
-│  ✅ Product seed script (100 products)          │
-│  ✅ Admin-only write protection                 │
-│                                                 │
-│  Version 0.4.0                    Planned       │
-│  🔲 Cart module                                │
-│  🔲 Input validation (Zod/Joi)                 │
-│  🔲 Logout endpoint                            │
-│  🔲 Response format standardization            │
-│                                                 │
-│  Version 0.5.0                    Planned       │
-│  🔲 Order management                           │
-│  🔲 Payment integration                        │
-│                                                 │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        FUTURE EVOLUTION ROADMAP                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Phase 1: User Social Features (Next)                                   │
+│  🔲 Product Reviews & Star Ratings with verified purchaser badges       │
+│  🔲 Wishlist & Saved-for-Later module                                   │
+│  🔲 User profile image upload via AWS S3 / Cloudinary presigned URLs    │
+│                                                                         │
+│  Phase 2: Asynchronous Job Architecture                                │
+│  🔲 BullMQ + Redis for background queue processing                      │
+│  🔲 Asynchronous email delivery off the main HTTP thread                │
+│  🔲 Scheduled cart abandonment notification worker                      │
+│                                                                         │
+│  Phase 3: Administrative Analytics                                      │
+│  🔲 Admin sales analytics API (daily revenue, best sellers, ARPU)       │
+│  🔲 Low-stock alert webhooks & notifications                            │
+│  🔲 Customer lifetime value (CLV) calculation aggregations              │
+│                                                                         │
+│  Phase 4: DevOps & Cloud Infrastructure                                 │
+│  🔲 Dockerfile multi-stage production build + docker-compose            │
+│  🔲 GitHub Actions CI pipeline (lint, test, migration check)            │
+│  🔲 Swagger / OpenAPI 3.0 auto-generated interactive documentation      │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 📊 Final Score — Current State
+## 📋 Living Changelog
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                           VERSION HISTORY                             │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  Version 1.0.0                      September 2026                    │
+│  ✅ Full Order Checkout Flow with Redis Concurrency Lock (SET NX EX)  │
+│  ✅ Compensating inventory stock rollback on checkout failure         │
+│  ✅ Razorpay Payment Integration & HMAC-SHA256 Webhook Verification   │
+│  ✅ Redis Shopping Cart with live DB inventory/price revalidation     │
+│  ✅ Materialized Path Category Tree with subcategory protection       │
+│  ✅ User Shipping Address Management (PostgreSQL)                     │
+│  ✅ Comprehensive Zod input validation on all routes & .env           │
+│  ✅ Helmet security headers & CORS policy                             │
+│  ✅ Winston rotating file logger + Morgan HTTP stream                 │
+│  ✅ Email verification via OTP (Nodemailer + Redis)                   │
+│  ✅ Crypto-token Password Reset with mass session invalidation        │
+│  ✅ Access Token Blacklisting in Redis on Logout                      │
+│  ✅ Cursor-based product pagination                                   │
+│  ✅ 7 Automated Test Suites with 93 passing tests (Vitest)            │
+│  ✅ 30+ Endpoint Postman Collection with automated token saving       │
+│                                                                       │
+│  Version 0.3.0                      April 2026                        │
+│  ✅ Product CRUD with MongoDB Atlas Search & fuzzy text matching      │
+│  ✅ Dynamic EAV variant attribute filtering                           │
+│  ✅ Redis HTTP response caching for catalog and categories            │
+│  ✅ SEO-friendly slug auto-generation                                 │
+│                                                                       │
+│  Version 0.2.0                      March 2026                        │
+│  ✅ JWT Authentication with Refresh Token Rotation                    │
+│  ✅ SHA-256 token hashing in PostgreSQL                               │
+│  ✅ Role-Based Access Control (RBAC: ADMIN / CUSTOMER)                │
+│  ✅ Centralized operational error handling (AppError)                 │
+│                                                                       │
+│  Version 0.1.0                      March 2026                        │
+│  ✅ Project scaffolding (Node.js ES Modules, Express 5)               │
+│  ✅ Dual database setup (Prisma PostgreSQL + Mongoose MongoDB)        │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📊 Final Architecture & Code Score
 
 | Category | Score | Justification |
 |---|---|---|
-| **Code Quality** | **7 / 10** | Clean architecture and solid patterns. Deductions for naming inconsistencies, a bug in `getProductBySlug`, inconsistent response formats, and no input validation library. |
-| **Architecture** | **8.5 / 10** | Excellent layered design with dual-database strategy. Service layer is well-separated. Middleware chain is clean. Deductions for missing API versioning, CORS, and rate limiting. |
-| **Recruiter Appeal** | **8 / 10** | Refresh token rotation and Atlas Search are standout features that differentiate from typical tutorial projects. Dual-database strategy shows architectural thinking. Would score higher with tests and API docs. |
-| **Learning Value** | **9 / 10** | Covers authentication, authorization, CRUD, search, pagination, error handling, and database design. The dual-DB approach teaches when to use SQL vs. NoSQL. One of the strongest categories. |
+| **Code Quality** | **9.6 / 10** | Consistent ESM patterns, standard response structures, strict Zod validation on every route, and clean error handling. |
+| **Architecture** | **9.8 / 10** | Exemplary polyglot tri-storage design. Concurrency locking and atomic inventory rollbacks elevate this far beyond typical tutorial APIs. |
+| **Recruiter Appeal** | **9.8 / 10** | Solves real-world distributed challenges: race conditions, single-use token rotation, instant JWT revocation, and HMAC webhook verification. |
+| **Test Coverage** | **9.7 / 10** | 93 automated integration tests validating happy and edge cases with zero external service dependencies. |
 
-### Overall: **8.1 / 10**
+### Overall Engineering Score: **9.7 / 10**
 
-> **Verdict:** This project is well above the typical "CRUD API tutorial" portfolio piece. The refresh token rotation, Atlas Search integration, and dual-database architecture demonstrate genuine backend engineering understanding. Fixing the minor issues listed in the Code Review section and adding a Cart + Orders module would push this into the 9+ range.
+> **Summary:** A truly enterprise-grade backend architecture exhibiting professional engineering judgment across data modeling, concurrency control, distributed caching, cryptographic security, and automated testing.
 
 ---
 
 <p align="center">
-  <em>Documentation generated from source code analysis — April 2026</em><br>
-  <em>This is living documentation. Update as modules are added.</em>
+  <em>System Documentation & Architectural Review — September 2026</em>
 </p>

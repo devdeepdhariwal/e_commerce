@@ -42,6 +42,7 @@ export const getProduct = async(req,res,next) => {
       category,
       minPrice,
       maxPrice,
+      cursor,
       ...rest
     }  = req.query;
 
@@ -78,18 +79,34 @@ export const getProduct = async(req,res,next) => {
     const options = {
       page,
       limit,
+      cursor,
     };
 
-  const {totalCount,products} = await productService.getProducts(filters,options);
+  const result = await productService.getProducts(filters,options);
+
+  // Cursor-based response
+  if (result.nextCursor !== undefined) {
+    return res.status(200).json({
+      success: true,
+      data: result.products,
+      pagination: {
+        nextCursor: result.nextCursor,
+        hasMore: result.nextCursor !== null,
+      },
+    });
+  }
+
+  // Offset-based response
+  const {totalCount, products} = result;
   const totalPages = Math.ceil(totalCount/limit)
   res.status(200).json({
     success : true,
     data : products,
     pagination : {
+     totalCount,
      totalPages : totalPages,
      hasNextPage : page<totalPages,
      hasPrevPage : page>1,
-
     }
   });
 

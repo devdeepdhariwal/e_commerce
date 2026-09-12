@@ -1,5 +1,9 @@
+// Only skip cache when actual filter params are present (not just pagination defaults)
+const PAGINATION_KEYS = new Set(["page", "limit", "cursor"]);
+
 export const skipProductListCache = (query = {}) => {
-  return Object.values(query).some((value) => {
+  return Object.entries(query).some(([key, value]) => {
+    if (PAGINATION_KEYS.has(key)) return false;
     if (Array.isArray(value)) return value.some((item) => String(item).trim());
     return Boolean(value && String(value).trim());
   });

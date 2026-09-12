@@ -165,3 +165,66 @@ await prisma.user.update({where : {
 await redis.del(key)
 return
 }
+
+export const forgotPasswordService = async (email) => {
+  if (!email) {
+    throw new AppError("Email is required", 400);
+  }
+  const normalisedEmail = email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email: normalisedEmail } });
+
+  // Silent return to prevent email enumeration
+  if (!user) {
+    return;
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const key = `pwreset:${normalisedEmail}`;
+
+  // 15-minute TTL
+  await redis.set(key, tokenHash, "EX", 900);
+
+  await sendmail({
+    to: normalisedEmail,
+    subject: "Password Reset Request",
+    text: `Your password reset token is: ${token}\n\nThis token will expire in 15 minutes.\n\nIf you did not request this, please ignore this email.`,
+  });
+};
+
+export const resetPasswordService = async (email, token, newPassword) => {
+  if (!email || !token || !newPassword) {
+    throw new AppError("All fields are required", 400);
+  }
+
+  const normalisedEmail = email.trim().toLowerCase();
+  const key = `pwreset:${normalisedEmail}`;
+
+  const storedHash = await redis.get(key);
+  if (!storedHash) {
+    throw new AppError("Invalid or expired reset token", 400);
+  }
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+  if (storedHash !== tokenHash) {
+    throw new AppError("Invalid or expired reset token", 400);
+  }
+
+  const user = await prisma.user.findUnique({ where: { email: normalisedEmail } });
+  if (!user) {
+    throw new AppError("Invalid or expired reset token", 400);
+  }
+
+  const hashedPassword = await hashPassword(newPassword);
+  await prisma.user.update({
+    where: { email: normalisedEmail },
+    data: { password: hashedPassword },
+  });
+
+  // Delete the reset token
+  await redis.del(key);
+
+  // Delete all refresh tokens for this user (force re-login)
+  await prisma.token.deleteMany({ where: { userId: user.id } });
+};

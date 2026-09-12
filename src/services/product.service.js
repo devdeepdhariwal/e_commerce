@@ -86,10 +86,63 @@ export const createProduct = async(productData) =>{
 
 export const getProducts = async (filters, options) => {
   const { name, category, minPrice, maxPrice, variantFilters } = filters;
-  const { page, limit } = options;
+  const { page, limit, cursor } = options;
 
-  const skip = (page - 1) * limit;
   let findCategory;
+
+  // Build variant attribute match stage for EAV filtering
+  const variantMatchStage = {};
+  if (variantFilters && Object.keys(variantFilters).length > 0) {
+    const elemMatchClauses = Object.entries(variantFilters).map(
+      ([attrName, attrValue]) => ({
+        $elemMatch: { name: attrName, value: attrValue },
+      })
+    );
+
+    if (elemMatchClauses.length === 1) {
+      variantMatchStage["variants.attributes"] = elemMatchClauses[0].$elemMatch;
+    } else {
+      variantMatchStage["variants"] = {
+        $elemMatch: {
+          attributes: {
+            $all: elemMatchClauses,
+          },
+        },
+      };
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // CURSOR-BASED PAGINATION (no search term only)
+  // ──────────────────────────────────────────────
+  if (cursor && !name) {
+    const query = { isActive: true, _id: { $gt: cursor }, ...variantMatchStage };
+
+    if (category) {
+      findCategory = await Category.findOne({ slug: category });
+      if (!findCategory) {
+        return { products: [], nextCursor: null };
+      }
+      query.categoryPath = findCategory._id;
+    }
+
+    if (minPrice) query["variants.price"] = { ...query["variants.price"], $gte: Number(minPrice) };
+    if (maxPrice) query["variants.price"] = { ...query["variants.price"], $lte: Number(maxPrice) };
+
+    const products = await product.find(query).sort({ _id: 1 }).limit(limit + 1);
+
+    const hasMore = products.length > limit;
+    if (hasMore) products.pop();
+
+    const nextCursor = hasMore ? products[products.length - 1]._id.toString() : null;
+
+    return { products, nextCursor };
+  }
+
+  // ──────────────────────────────────────────────
+  // OFFSET-BASED / ATLAS SEARCH PAGINATION
+  // ──────────────────────────────────────────────
+  const skip = (page - 1) * limit;
 
   const mustClauses = [];
   const shouldClauses = [];
@@ -133,28 +186,6 @@ export const getProducts = async (filters, options) => {
   mustClauses.push({
     equals: { path: "isActive", value: true },
   });
-
-  // Build the variant attribute match stage for EAV filtering
-  const variantMatchStage = {};
-  if (variantFilters && Object.keys(variantFilters).length > 0) {
-    const elemMatchClauses = Object.entries(variantFilters).map(
-      ([attrName, attrValue]) => ({
-        $elemMatch: { name: attrName, value: attrValue },
-      })
-    );
-
-    if (elemMatchClauses.length === 1) {
-      variantMatchStage["variants.attributes"] = elemMatchClauses[0].$elemMatch;
-    } else {
-      variantMatchStage["variants"] = {
-        $elemMatch: {
-          attributes: {
-            $all: elemMatchClauses,
-          },
-        },
-      };
-    }
-  }
 
   const pipeline = [
     {

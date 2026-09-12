@@ -10,7 +10,9 @@ import {
   getUserById,
   logoutUser,
   sendOtpService,
-  verifyOtpService
+  verifyOtpService,
+  forgotPasswordService,
+  resetPasswordService,
 } from "../services/auth.service.js";
 
 import AppError from "../utils/AppError.js";
@@ -20,19 +22,6 @@ import AppError from "../utils/AppError.js";
 export const register = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      throw new AppError("All fields are required", 400); 
-    }
-
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/;
-
-    if (!passwordRegex.test(password)) {
-      throw new AppError(                               
-        "Password must be at least 8 characters, include uppercase, lowercase, number, and special character",
-        400
-      );
-    }
 
     const user = await registerUser({ name, email, password });
     await sendOtpService(email);
@@ -55,10 +44,6 @@ export const register = async (req, res, next) => {
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-      throw new AppError("All fields are required", 400); 
-    }
 
     const user = await loginUser({ email, password });
     const accessToken = generateAccessToken(user);
@@ -175,9 +160,6 @@ export async function getMe(req, res, next) {
 export const sendOtp = async(req,res,next) => {
 try {
   const email = req.body.email;
-  if(!email){
-    throw new AppError("Email is required",400)
-  }
   await sendOtpService(email)
   return res.status(200).json({
     success : true,
@@ -191,18 +173,38 @@ try {
 export const verifyOtp = async(req,res,next) => {
 try {
   const {email, otp} = req.body;
-if(!email){
-  throw new AppError("Email is required",400)
-}
-if(!otp){
-  throw new AppError("Otp is required",400)
-}
-await verifyOtpService(email,otp)
-return res.status(200).json({
-  success : true,
-  message : "Email is Successfully Verified"
-})
+  await verifyOtpService(email,otp)
+  return res.status(200).json({
+    success : true,
+    message : "Email is Successfully Verified"
+  })
 } catch (error) {
   next(error)
 }
 }
+
+export const forgotPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    await forgotPasswordService(email);
+    return res.status(200).json({
+      success: true,
+      message: "If this email is registered, a password reset link has been sent",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resetPassword = async (req, res, next) => {
+  try {
+    const { email, token, newPassword } = req.body;
+    await resetPasswordService(email, token, newPassword);
+    return res.status(200).json({
+      success: true,
+      message: "Password has been reset successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
