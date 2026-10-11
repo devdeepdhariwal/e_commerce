@@ -29,10 +29,11 @@ const envSchema = z.object({
   SMTP_PASS: z.string().min(1, "SMTP_PASS is required"),
   SMTP_FROM: z.string().email("SMTP_FROM must be a valid email"),
 
-  // Razorpay (optional in dev, required in production)
+  // Razorpay keys are optional in dev. The webhook secret is always required
+  // so signature checks cannot boot with an empty HMAC key.
   RAZORPAY_KEY_ID: z.string().default(""),
   RAZORPAY_KEY_SECRET: z.string().default(""),
-  RAZORPAY_WEBHOOK_SECRET: z.string().default(""),
+  RAZORPAY_WEBHOOK_SECRET: z.string().min(1, "RAZORPAY_WEBHOOK_SECRET is required"),
 
   // CORS
   CORS_ORIGIN: z.string().default("http://localhost:5173"),

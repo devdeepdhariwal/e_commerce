@@ -40,12 +40,26 @@ export const cacheMiddleware = (ttlSeconds, { keyFn, skipFn } = {}) => {
   };
 };
 
+async function deleteKeysByPattern(pattern) {
+  let cursor = "0";
+  let deleted = 0;
+
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+    cursor = String(next);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+      deleted += keys.length;
+    }
+  } while (cursor !== "0");
+
+  return deleted;
+}
+
 export const invalidateProductListCache = async () => {
   try {
-    const staleKeys = await redis.keys("cache:products*");
-    if (staleKeys.length > 0) {
-      await redis.del(...staleKeys);
-    } else {
+    const deleted = await deleteKeysByPattern("cache:products*");
+    if (deleted === 0) {
       await redis.del(productsKey());
     }
   } catch (err) {

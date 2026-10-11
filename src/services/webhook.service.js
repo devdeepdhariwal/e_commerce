@@ -19,12 +19,18 @@ export const handlePayment = async(event) =>{
  }
 
 const userId = order.userId;
- if(order.status == "PAID" || order.status == "FAILED"){
-  return;
- }
 
  if(event.event == "payment.captured"){
     const razorpayPaymentId = event.payload.payment.entity.id;
+    if (order.status === "PAID") {
+      return;
+    }
+    if (order.status !== "PENDING") {
+      console.warn(
+        `payment.captured for non-pending order ${order.id} payment ${razorpayPaymentId}; manual refund required`
+      );
+      return;
+    }
     await prisma.$transaction(async (tx) => {
       await tx.order.update({
         where: { id: order.id },
@@ -48,43 +54,49 @@ const userId = order.userId;
  if(event.event == "payment.failed"){
     const razorpayPaymentId = event.payload.payment.entity.id;
 
-   const result = await prisma.order.updateMany({
-   where: {
-     id: order.id,
-     status: "PENDING",
-   },
-   data: {
-     status: "FAILED",
-   },
- });
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          status: "PENDING",
+        },
+        data: {
+          status: "FAILED",
+        },
+      });
 
- if(result.count == 0){
-    return;
- }
+      if (updated.count === 0) {
+        return updated;
+      }
 
-   await prisma.payment.update({
-     where: { orderId: order.id },
-     data: {
-       status: "FAILED",
-       razorpayPaymentId,
-     },
-   });
-   
-for (const item of order.items){
-   await product.updateOne(
-  {
-    _id: item.productId,
-    "variants.sku": item.sku,
-  },
-  {
-    $inc: {
-      "variants.$.stock": item.quantity,
-    },
-  }
-);
-}
+      await tx.payment.updateMany({
+        where: { orderId: order.id },
+        data: {
+          status: "FAILED",
+          razorpayPaymentId,
+        },
+      });
 
-  return;
+      return updated;
+    });
+
+    if (result.count === 0) {
+      return;
+    }
+
+    for (const item of order.items) {
+      await product.updateOne(
+        {
+          _id: item.productId,
+          "variants.sku": item.sku,
+        },
+        {
+          $inc: {
+            "variants.$.stock": item.quantity,
+          },
+        }
+      );
+    }
  }
  
 

@@ -3,7 +3,7 @@
 > A production-grade RESTful E-Commerce Backend demonstrating enterprise-level backend engineering with polyglot persistence (PostgreSQL + MongoDB + Redis), concurrency-safe checkout, secure JWT authentication with refresh token rotation, Zod runtime validation, and Razorpay payment integration.
 
 ![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)
-![Tests](https://img.shields.io/badge/Tests-93%2F93%20Passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-103%2F103%20Passing-brightgreen)
 ![Node.js](https://img.shields.io/badge/Node.js-ES%20Modules-339933?logo=node.js)
 ![Express](https://img.shields.io/badge/Express-v5-000000?logo=express)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Prisma%20v7-4169E1?logo=postgresql)
@@ -25,8 +25,8 @@
 | **Shipping Addresses** | ✅ Completed | PostgreSQL Address Book per User, UUID Validation, Default Addresses |
 | **Orders & Checkout** | ✅ Completed | Concurrency Lock (`SET NX EX`), Atomic Stock Reservation with Rollback, Status Lifecycle |
 | **Payments & Webhooks** | ✅ Completed | Razorpay Order Creation, Raw-Body HMAC-SHA256 Signature Verification, Idempotent Settlement |
-| **Security & Logging** | ✅ Completed | Helmet, CORS, Redis Rate Limiting (`rate-limit-redis`), Winston Log Rotation, Morgan Stream |
-| **Automated Testing** | ✅ Completed | 7 Test Suites, 93/93 Tests Passing across all routes (Vitest + Supertest) |
+| **Security & Logging** | ✅ Completed | Helmet, CORS, Redis Rate Limiting (`rate-limit-redis`), Winston size-based rotation (error log 5 MB × 5 files, combined log 10 MB × 5 files), Morgan Stream |
+| **Automated Testing** | ✅ Completed | 8 Test Suites, 103/103 tests passing across all routes (Vitest + Supertest) |
 
 ---
 
@@ -91,8 +91,8 @@ cp .env.example .env
 # 3. Apply Prisma database migrations
 npx prisma migrate dev
 
-# 4. (Optional) Seed 100 sample randomized products
-node src/seedProduct.js
+# 4. (Optional) Seed sample randomized products
+node scripts/seedProducts.js
 
 # 5. Start development server (hot-reload via nodemon)
 npm run dev
@@ -102,24 +102,25 @@ npm run dev
 
 ## 🧪 Testing
 
-The codebase includes **93 automated integration tests** with **100% pass rate**, testing both happy paths and edge cases (authentication, token replay, schema rejections, cart stock adjustments, order pagination, address existence).
+The codebase includes **103/103 tests passing**, covering happy paths and edge cases (authentication, token replay, schema rejections, cart stock adjustments, checkout, webhooks, order pagination, address existence).
 
 ```bash
-npm test           # Run all 7 test suites via Vitest
+npm test           # Run all 8 test suites via Vitest
 npm run test:watch # Run Vitest in interactive watch mode
 ```
 
 ```
- ✓ src/__tests__/order.test.js (11 tests)
+ ✓ src/__tests__/order.test.js (18 tests)
+ ✓ src/__tests__/product.test.js (27 tests)
+ ✓ src/__tests__/cart.test.js (16 tests)
  ✓ src/__tests__/password-reset.test.js (8 tests)
- ✓ src/__tests__/address.test.js (7 tests)
- ✓ src/__tests__/cart.test.js (14 tests)
- ✓ src/__tests__/category.test.js (10 tests)
- ✓ src/__tests__/product.test.js (26 tests)
+ ✓ src/__tests__/otp.test.js (8 tests)
  ✓ src/__tests__/auth.test.js (17 tests)
+ ✓ src/__tests__/address.test.js (7 tests)
+ ✓ src/__tests__/webhook.test.js (2 tests)
 
- Test Files  7 passed (7)
-      Tests  93 passed (93)
+ Test Files  8 passed (8)
+      Tests  103 passed (103)
 ```
 
 ---
@@ -197,6 +198,28 @@ Detailed technical design documents are maintained in the [`docs/`](./docs/) dir
 | [**04_FUNCTION_DOCS.md**](./docs/04_FUNCTION_DOCS.md) | Deep-dive logic breakdowns of checkout locking, cart revalidation, HMAC webhooks, and token rotation |
 | [**05_REVIEW_AND_ROADMAP.md**](./docs/05_REVIEW_AND_ROADMAP.md) | Engineering review, resolved gaps, production readiness evaluation, and future roadmap |
 | [**ecommerce_api.postman_collection.json**](./docs/ecommerce_api.postman_collection.json) | Ready-to-import Postman collection covering 30+ endpoints with automated token persistence |
+
+---
+
+## Known limitations
+
+- A process crash mid-checkout after stock deduction can leave stock deducted until reconciled (a saga or reconciliation job is the fix).
+- Unpaid PENDING orders are not auto-expired; a TTL-based cleanup job is the planned fix.
+- Cross-user stock safety relies on the atomic MongoDB `$gte` guard, not on the per-user checkout lock.
+- Redis response caching was benchmarked against remote Upstash and Atlas instances and showed no latency gain at this dataset size (~57 ms avg for both hits and misses, dominated by network round trips). Benefits are expected with a co-located Redis instance or heavier queries.
+
+---
+
+## Recent fixes
+
+1. `RAZORPAY_WEBHOOK_SECRET` is required at boot; webhooks read it from the validated env object and reject missing signatures with 400 and invalid signatures with 401.
+2. A second checkout while an order is PENDING returns 409 so stock is not deducted twice.
+2b. Cancel uses a status-guarded `updateMany` inside a transaction so concurrent cancels restore stock only once.
+2c. `payment.captured` on a non-PENDING order (for example CANCELLED) is not marked PAID and does not change stock.
+3. `payment.failed` updates order and payment in one transaction; MongoDB stock is restored only if the guarded PENDING → FAILED update succeeded.
+4. Webhook events are deduplicated with Redis `SET NX` on `webhook_event:<id>` after signature verification.
+5. Product list cache invalidation uses Redis SCAN instead of `KEYS`.
+6. Checkout lock value is a request token; release is compare-and-delete so a slow request cannot delete another request's lock.
 
 ---
 

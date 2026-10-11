@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import AppError from "../utils/AppError.js";
 import { revalidateCart } from "./cart.service.js";
 import prisma from "../config/db.js";
@@ -5,19 +6,41 @@ import Product from "../models/product.model.js";
 import razorpay from "../config/razorpay.js";
 import Redis from "../config/redis.js";
 
+// Delete the lock only when it still belongs to this request. A checkout that
+// outlives the 30s TTL must not remove a lock a later request has acquired.
+const RELEASE_CHECKOUT_LOCK = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+else
+  return 0
+end
+`;
+
 export const checkout = async (userId, addressId) => {
   if (!addressId) {
     throw new AppError("AddressId is required", 400);
   }
 
   const lockKey = `checkout_lock:${userId}`;
-  const acquired = await Redis.set(lockKey, "1", "EX", 30, "NX");
+  const lockToken = crypto.randomUUID();
+  const acquired = await Redis.set(lockKey, lockToken, "EX", 30, "NX");
 
   if (acquired !== "OK") {
     throw new AppError("Checkout already in progress", 409);
   }
 
   try {
+    const existingPending = await prisma.order.findFirst({
+      where: { userId, status: "PENDING" },
+      select: { id: true },
+    });
+    if (existingPending) {
+      throw new AppError(
+        `You already have a pending order (${existingPending.id}). Pay for it or cancel it first.`,
+        409
+      );
+    }
+
     const { cart, pricesChanged, stockAdjusted, removed } =
       await revalidateCart(userId);
 
@@ -61,7 +84,7 @@ export const checkout = async (userId, addressId) => {
         name: product.name,
         price: variant.price,
         quantity: item.quantity,
-        image: variant.images[0] ?? "",
+        image: variant.images?.[0] ?? "",
       });
     }
 
@@ -172,7 +195,7 @@ export const checkout = async (userId, addressId) => {
       throw error;
     }
   } finally {
-    await Redis.del(lockKey);
+    await Redis.eval(RELEASE_CHECKOUT_LOCK, 1, lockKey, lockToken);
   }
 };
 
@@ -241,32 +264,28 @@ export const cancelOrder = async (userId, orderId) => {
     throw new AppError("Order not found", 404);
   }
 
-  if (order.status !== "PENDING") {
-    throw new AppError(
-      `Cannot cancel order with status ${order.status}`,
-      400
-    );
-  }
-
-  // Update order status + payment status in a transaction
   const cancelled = await prisma.$transaction(async (tx) => {
-    const updated = await tx.order.update({
-      where: { id: orderId },
+    const result = await tx.order.updateMany({
+      where: { id: orderId, userId, status: "PENDING" },
       data: { status: "CANCELLED" },
-      include: { items: true, payment: true },
     });
 
-    if (updated.payment) {
-      await tx.payment.update({
-        where: { id: updated.payment.id },
-        data: { status: "FAILED" },
-      });
+    if (result.count === 0) {
+      throw new AppError("Order cannot be cancelled", 400);
     }
 
-    return updated;
+    await tx.payment.updateMany({
+      where: { orderId },
+      data: { status: "FAILED" },
+    });
+
+    return tx.order.findUnique({
+      where: { id: orderId },
+      include: { items: true, payment: true },
+    });
   });
 
-  // Restore inventory in MongoDB
+  // Restore inventory only after the status change commits.
   for (const item of cancelled.items) {
     await Product.updateOne(
       {

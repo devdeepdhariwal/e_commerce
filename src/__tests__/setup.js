@@ -9,6 +9,11 @@ if (!process.env.CART_EXPIRES) {
   process.env.CART_EXPIRES = "3600";
 }
 
+// env.js rejects an empty webhook secret. Set this before the app (and env.js) loads.
+if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
+  process.env.RAZORPAY_WEBHOOK_SECRET = "test_webhook_secret";
+}
+
 // Never hit real SMTP in tests. Register and send-otp both call sendmail.
 vi.mock("../utils/mailer.js", () => ({
   sendmail: vi.fn().mockResolvedValue(undefined),

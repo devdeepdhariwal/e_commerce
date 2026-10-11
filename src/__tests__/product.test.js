@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import app from "../app.js";
 import prisma from "../config/db.js";
+import redis from "../config/redis.js";
 import product from "../models/product.model.js";
 import category from "../models/category.model.js";
+import { invalidateProductListCache } from "../middlewares/cache.js";
 
 // ─── Test Data ───────────────────────────────────────────
 
@@ -580,5 +582,21 @@ describe("DELETE /products/:id", () => {
       .set("Authorization", `Bearer ${adminToken}`);
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("product list cache invalidation", () => {
+  it("removes every cache:products* key and leaves other keys", async () => {
+    await redis.set("cache:products", JSON.stringify({ items: [] }));
+    await redis.set("cache:products:page2", "stale");
+    await redis.set("cache:categories", "keep");
+
+    await invalidateProductListCache();
+
+    expect(await redis.get("cache:products")).toBeNull();
+    expect(await redis.get("cache:products:page2")).toBeNull();
+    expect(await redis.get("cache:categories")).toBe("keep");
+
+    await redis.del("cache:categories");
   });
 });
