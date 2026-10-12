@@ -37,6 +37,10 @@ jobs:
       MONGODB_URL: ${{ secrets.MONGODB_URL }}
       REDIS_URL: redis://localhost:6379
       CART_EXPIRES: "3600"
+      SMTP_HOST: localhost
+      SMTP_USER: test-user
+      SMTP_PASS: test-pass
+      SMTP_FROM: no-reply@example.com
       NODE_ENV: development
 
     steps:
