@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="E-Commerce Backend API Explorer — register, login, browse products, manage cart, and inspect raw API responses." />
+  <title>E-Commerce API Explorer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <header>
+    <span class="logo">⚡ E-Commerce API</span>
+    <nav id="main-nav">
+      <button data-view="register">Register</button>
+      <button data-view="login">Login</button>
+      <button data-view="forgot">Forgot PW</button>
+      <button data-view="products">Products</button>
+      <button data-view="categories">Categories</button>
+      <button data-view="cart">Cart</button>
+      <a href="/docs" target="_blank">API Docs ↗</a>
+    </nav>
+    <span id="user-indicator" class="user-indicator hidden"></span>
+    <button id="btn-logout" class="btn-logout hidden">Logout</button>
+  </header>
+
+  <div id="app">
+
+    <!-- ─── Register ─────────────────────────────── -->
+    <section id="view-register" class="view">
+      <div class="register-grid">
+        <div>
+          <h2>Register</h2>
+          <div id="register-msg"></div>
+          <div class="form-card">
+            <form id="form-register">
+              <label for="reg-name">Name</label>
+              <input id="reg-name" name="name" required />
+              <label for="reg-email">Email</label>
+              <input id="reg-email" name="email" type="email" required />
+              <label for="reg-pass">Password</label>
+              <input id="reg-pass" name="password" type="password" minlength="8" required />
+              <button type="submit">Register</button>
+            </form>
+          </div>
+        </div>
+        <div>
+          <h2>Verify Email</h2>
+          <div id="verify-msg"></div>
+          <div class="form-card">
+            <form id="form-verify-otp">
+              <label for="verify-email">Email</label>
+              <input id="verify-email" name="email" type="email" required />
+              <label for="verify-otp">OTP Code</label>
+              <input id="verify-otp" name="otp" required placeholder="Code from your email" />
+              <button type="submit">Verify Email</button>
+            </form>
+          </div>
+        </div>
+        <div>
+          <h2>Resend OTP</h2>
+          <div id="resend-msg"></div>
+          <div class="form-card">
+            <form id="form-resend-otp">
+              <label for="resend-email">Email</label>
+              <input id="resend-email" name="email" type="email" required />
+              <button type="submit">Resend OTP</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div id="rp-register" class="response-panel hidden"></div>
+    </section>
+
+    <!-- ─── Login ────────────────────────────────── -->
+    <section id="view-login" class="view">
+      <h2>Login</h2>
+      <div id="login-msg"></div>
+      <div class="form-card">
+        <form id="form-login">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" required />
+          <label for="login-pass">Password</label>
+          <input id="login-pass" name="password" type="password" required />
+          <button type="submit">Login</button>
+        </form>
+      </div>
+      <div id="rp-login" class="response-panel hidden"></div>
+    </section>
+
+    <!-- ─── Forgot / Reset Password ──────────────── -->
+    <section id="view-forgot" class="view">
+      <div class="two-col-grid">
+      <div>
+      <h2>Forgot Password</h2>
+      <div id="forgot-msg"></div>
+      <div class="form-card">
+        <form id="form-forgot">
+          <label for="forgot-email">Email</label>
+          <input id="forgot-email" name="email" type="email" required />
+          <button type="submit">Send Reset Link</button>
+        </form>
+      </div>
+      </div>
+      <div>
+      <h2>Reset Password</h2>
+      <div id="reset-msg"></div>
+      <div class="form-card">
+        <form id="form-reset">
+          <label for="reset-email">Email</label>
+          <input id="reset-email" name="email" type="email" required />
+          <label for="reset-token">Reset Token</label>
+          <input id="reset-token" name="token" required />
+          <label for="reset-pass">New Password</label>
+          <input id="reset-pass" name="newPassword" type="password" minlength="8" required />
+          <button type="submit">Reset Password</button>
+        </form>
+      </div>
+      </div>
+      </div>
+      <div id="rp-forgot" class="response-panel hidden"></div>
+    </section>
+
+    <!-- ─── Products ─────────────────────────────── -->
+    <section id="view-products" class="view">
+      <h2>Products</h2>
+      <div id="products-msg"></div>
+      <div class="toolbar">
+        <input type="search" id="prod-search" placeholder="Search by name…" />
+        <select id="prod-category">
+          <option value="">All categories</option>
+        </select>
+      </div>
+      <div id="products-table-wrap"></div>
+      <div id="products-pagination" class="pagination"></div>
+      <div id="rp-products" class="response-panel hidden"></div>
+    </section>
+
+    <!-- ─── Categories ───────────────────────────── -->
+    <section id="view-categories" class="view">
+      <h2>Categories</h2>
+      <div id="categories-msg"></div>
+      <div id="cat-list" class="cat-grid"></div>
+      <div id="rp-categories" class="response-panel hidden"></div>
+    </section>
+
+    <!-- ─── Cart ─────────────────────────────────── -->
+    <section id="view-cart" class="view">
+      <h2>Cart</h2>
+      <div id="cart-msg"></div>
+      <div id="cart-items"></div>
+      <div id="rp-cart" class="response-panel hidden"></div>
+    </section>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
